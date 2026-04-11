@@ -35,6 +35,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegis"
+version = "1.2.0"
+dependencies = [
+ "aes-gcm",
+ "arboard",
+ "argon2",
+ "dirs",
+ "glow",
+ "glutin",
+ "glutin-winit",
+ "imgui",
+ "imgui-glow-renderer",
+ "imgui-winit-support",
+ "open",
+ "rand",
+ "raw-window-handle 0.5.2",
+ "rfd",
+ "serde",
+ "serde_json",
+ "totp-rs",
+ "windows-sys 0.61.2",
+ "winit",
+ "zeroize",
+]
+
+[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1593,32 +1619,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "pwm"
-version = "1.2.0"
-dependencies = [
- "aes-gcm",
- "arboard",
- "argon2",
- "dirs",
- "glow",
- "glutin",
- "glutin-winit",
- "imgui",
- "imgui-glow-renderer",
- "imgui-winit-support",
- "open",
- "rand",
- "raw-window-handle 0.5.2",
- "rfd",
- "serde",
- "serde_json",
- "totp-rs",
- "windows-sys 0.61.2",
- "winit",
- "zeroize",
 ]
 
 [[package]]

@@ -17,10 +17,10 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: pwm
+            artifact: aegis
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: pwm.exe
+            artifact: aegis.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +62,7 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: pwm-${{ matrix.target }}
+          name: aegis-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
 
   release:
@@ -75,24 +75,24 @@ jobs:
       - name: Download Linux binary
         uses: actions/download-artifact@v4
         with:
-          name: pwm-x86_64-unknown-linux-gnu
+          name: aegis-x86_64-unknown-linux-gnu
           path: artifacts/linux
 
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
-          name: pwm-x86_64-pc-windows-msvc
+          name: aegis-x86_64-pc-windows-msvc
           path: artifacts/windows
 
       - name: Rename artifacts
         run: |
-          mv artifacts/linux/pwm artifacts/pwm-linux-x86_64
-          mv artifacts/windows/pwm.exe artifacts/pwm-windows-x86_64.exe
+          mv artifacts/linux/aegis artifacts/aegis-linux-x86_64
+          mv artifacts/windows/aegis.exe artifacts/aegis-windows-x86_64.exe
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/pwm-linux-x86_64
-            artifacts/pwm-windows-x86_64.exe
+            artifacts/aegis-linux-x86_64
+            artifacts/aegis-windows-x86_64.exe
           generate_release_notes: true

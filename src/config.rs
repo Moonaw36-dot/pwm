@@ -13,7 +13,7 @@ impl Default for Config {
 }
 
 fn config_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("pwm").join("config.json"))
+    Some(dirs::config_dir()?.join("aegis").join("config.json"))
 }
 
 pub fn load() -> Config {

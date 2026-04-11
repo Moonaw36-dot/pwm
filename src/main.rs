@@ -77,7 +77,7 @@ fn apply_theme(style: &mut imgui::Style) {
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     let window_builder = WindowBuilder::new()
-        .with_title("Password Manager")
+        .with_title("Aegis")
         .with_inner_size(winit::dpi::LogicalSize::new(1024.0, 768.0));
 
     let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));

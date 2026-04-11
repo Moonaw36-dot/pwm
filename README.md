@@ -1,4 +1,4 @@
-# pwm
+# Aegis
 
 A minimalist desktop password manager built in Rust. Passwords are stored in an encrypted local file — nothing leaves your machine.
 
@@ -7,10 +7,14 @@ A minimalist desktop password manager built in Rust. Passwords are stored in an 
 - **AES-256-GCM** encryption with **Argon2** key derivation
 - Master password is never stored — derived fresh on every unlock
 - Add, edit, delete, and search password entries
+- Entry tags for organization
 - TOTP (two-factor) code generation per entry
 - Built-in password generator with configurable length and charset
 - Password strength warnings before saving weak entries
 - One-click copy to clipboard (auto-clears after 10 seconds)
+- Auto-lock on idle with configurable timeout
+- Vault health report (weak and reused passwords)
+- CSV export for backup or migration
 - Dark, minimal UI
 
 ## Building
@@ -19,7 +23,7 @@ Requires Rust (edition 2024) and OpenGL drivers. The Inter font is bundled in th
 
 ```bash
 cargo build --release
-./target/release/pwm
+./target/release/aegis
 ```
 
 ## How it works
@@ -39,6 +43,7 @@ The ciphertext decrypts to a JSON array of password entries. A fresh nonce is ge
 | Copy password | Left click an entry |
 | Copy username | Right click an entry |
 | Copy TOTP code | Middle click the TOTP |
+| Focus search | Ctrl+F |
 
 All copied values are automatically cleared from the clipboard after 10 seconds.
 
@@ -52,12 +57,12 @@ All copied values are automatically cleared from the clipboard after 10 seconds.
 | `arboard` | Clipboard with auto-clear |
 | `totp-rs` | TOTP code generation |
 | `rfd` | Native file dialogs |
+| `zeroize` | Secure memory wiping |
 
 ## Limitations
 
-- Clipboard auto-clear excludes copied values from clipboard history on Linux only (`arboard::SetExtLinux`); on macOS and Windows the value is still cleared after 10 seconds but may appear in history managers
+- Clipboard auto-clear excludes copied values from clipboard history on Linux and Windows; macOS falls back to plain clear after 10 seconds
 - Single local file — no cloud sync
-- No import/export
 
 ## License
 

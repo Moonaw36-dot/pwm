@@ -291,7 +291,7 @@ impl AppState {
 
 
 fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
-    ui.text("Welcome to Moonaw's password manager, fully written in Rust.");
+    ui.text("Welcome to Aegis, Moonaw's password manager fully written in Rust.");
     ui.separator();
 
     if state.store.is_none() {
@@ -534,7 +534,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         state.last_activity = Instant::now();
     }
 
-    ui.window("Password Manager")
+    ui.window("Aegis")
         .size([550.0, 200.0], imgui::Condition::FirstUseEver)
         .menu_bar(true)
         .build(|| {
@@ -581,7 +581,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     render_health_tab(ui, state);
                 });
                 imgui::TabItem::new("About").build(ui, || {
-                    ui.text("This is a password manager written in Rust, by Moonaw.");
+                    ui.text("Aegis — a password manager written in Rust, by Moonaw.");
                     ui.separator();
 
                     let link_color = [0.27, 0.67, 1.0, 1.0];
