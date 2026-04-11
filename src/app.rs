@@ -154,6 +154,20 @@ pub fn manual_strength(password: &str) -> StrengthResult {
     if password.is_empty() {
         return (0, "—", [0.45, 0.45, 0.45, 1.0]);
     }
+
+    // Detect passphrase: 2+ purely lowercase-alpha words split by non-alpha chars
+    let words: Vec<&str> = password
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let looks_like_passphrase = words.len() >= 2
+        && words.iter().all(|w| w.chars().all(|c| c.is_ascii_lowercase()));
+
+    if looks_like_passphrase {
+        let wordlist_size = WORDLIST.lines().filter(|l| !l.is_empty()).count() as f64;
+        return bits_to_strength(words.len() as f64 * wordlist_size.log2());
+    }
+
     let mut pool = 0.0f64;
     if password.chars().any(|c| c.is_ascii_lowercase()) { pool += 26.0; }
     if password.chars().any(|c| c.is_ascii_uppercase()) { pool += 26.0; }
