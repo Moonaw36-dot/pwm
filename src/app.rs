@@ -317,23 +317,22 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
                             let mut totp_code: Option<String> = None;
 
-                            ui.group(|| {
-                                if entry.notes.is_empty() {
-                                    ui.text(format!("[{}] {}", entry.label, entry.username));
-                                } else {
-                                    ui.text(format!("[{}] {} ? {}", entry.label, entry.username, &entry.notes));
+                            if let Some(secret) = &entry.totp_secret {
+                                use totp_rs::{Algorithm, Secret, TOTP};
+                                if let Ok(bytes) = Secret::Encoded(secret.replace(" ", "").to_uppercase()).to_bytes()
+                                    && let Ok(totp) = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes)
+                                    && let Ok(code) = totp.generate_current()
+                                {
+                                    totp_code = Some(code);
                                 }
+                            }
 
-                                if let Some(secret) = &entry.totp_secret {
-                                    use totp_rs::{Algorithm, Secret, TOTP};
-                                    if let Ok(bytes) = Secret::Encoded(secret.replace(" ", "").to_uppercase()).to_bytes()
-                                        && let Ok(totp) = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes)
-                                        && let Ok(code) = totp.generate_current()
-                                    {
-                                        ui.same_line();
-                                        ui.text(format!("TOTP: {}", code));
-                                        totp_code = Some(code);
-                                    }
+                            ui.group(|| {
+                                let totp_suffix = totp_code.as_deref().map(|c| format!(" | TOTP: {}", c)).unwrap_or_default();
+                                if entry.notes.is_empty() {
+                                    ui.text(format!("[{}] {}{}", entry.label, entry.username, totp_suffix));
+                                } else {
+                                    ui.text(format!("[{}] {} ? {}{}", entry.label, entry.username, &entry.notes, totp_suffix));
                                 }
                             });
 
