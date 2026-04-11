@@ -23,7 +23,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         ui.checkbox("Numbers (0-9)", &mut state.gen_numbers);
         ui.checkbox("Special (!@#...)", &mut state.gen_special);
     } else {
-        ui.slider("Word count", 3, 10, &mut state.gen_word_count);
+        ui.slider("Word count", 3, 64, &mut state.gen_word_count);
         ui.input_text("Separator", &mut state.gen_separator).build();
     }
 
@@ -66,8 +66,18 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
 fn render_strength_bar(ui: &imgui::Ui, (score, label, color): StrengthResult) {
     let fraction = (score + 1) as f32 / 5.0;
+    let bar_width = ui.calc_item_width();
+    let bar_height = 16.0f32;
+
+    let cursor = ui.cursor_screen_pos();
+    let text_size = ui.calc_text_size(label);
+
     let _col = ui.push_style_color(imgui::StyleColor::PlotHistogram, color);
-    imgui::ProgressBar::new(fraction).size([200.0, 16.0]).overlay_text(label).build(ui);
+    imgui::ProgressBar::new(fraction).size([bar_width, bar_height]).build(ui);
+
+    let text_x = cursor[0] + (bar_width - text_size[0]) / 2.0;
+    let text_y = cursor[1] + (bar_height - text_size[1]) / 2.0;
+    ui.get_window_draw_list().add_text([text_x, text_y], [1.0, 1.0, 1.0, 1.0], label);
 }
 
 pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
