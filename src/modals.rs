@@ -274,6 +274,9 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     let pw = state.password_input.clone();
     let strength = state.cached_strength(&pw);
+    if ui.button("Generate password"){
+        state.gen_password_modal = true;
+    }
     render_strength_bar(ui, strength);
 
     ui.input_text("Notes", &mut state.notes_input).build();
