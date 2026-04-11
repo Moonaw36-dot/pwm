@@ -57,7 +57,7 @@ All copied values are automatically cleared from the clipboard after 10 seconds.
 
 ## Limitations
 
-- Linux only (clipboard auto-clear uses `arboard::SetExtLinux`)
+- Clipboard auto-clear excludes copied values from clipboard history on Linux only (`arboard::SetExtLinux`); on macOS and Windows the value is still cleared after 10 seconds but may appear in history managers
 - Single local file — no cloud sync
 - No import/export
 

@@ -3,7 +3,6 @@ use std::time::Instant;
 use serde::{Serialize, Deserialize};
 use crate::file_ops::{open_file_dialog, save_store};
 use arboard::Clipboard;
-use arboard::SetExtLinux;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordEntry {
@@ -174,11 +173,7 @@ impl AppState {
     }
 
     pub fn copy_to_clipboard(&mut self, text: &str, field_name: &str) {
-        self.clipboard
-            .set()
-            .exclude_from_history()
-            .text(text)
-            .expect("Failed to copy to clipboard");
+        crate::clipboard::set_excluded_from_history(&mut self.clipboard, text);
         self.clipboard_clear_at = Some(Instant::now() + std::time::Duration::from_secs(10));
         self.copied_field = Some(field_name.to_string());
         self.copied_clear_at = Some(Instant::now() + std::time::Duration::from_secs(3));
@@ -195,7 +190,7 @@ fn render_entry_list(ui: &imgui::Ui, store: &PasswordList) {
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     // Auto-clear clipboard after 10s
     if let Some(clear_at) = state.clipboard_clear_at && Instant::now() >= clear_at {
-        state.clipboard.set().exclude_from_history().text("").ok();
+        crate::clipboard::set_excluded_from_history(&mut state.clipboard, "");
         state.clipboard_clear_at = None;
     }
 
