@@ -84,6 +84,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([400.0, 0.0]);
 
     ui.input_text("Label##add", &mut state.label_input).build();
+    ui.input_text("Url / website##add", &mut state.url_input).build();
     ui.input_text("Username##add", &mut state.username_input).build();
     ui.input_text("Password##add", &mut state.password_input).build();
 
@@ -100,7 +101,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     if ui.button("Confirm") {
-        if state.username_input.is_empty() || state.password_input.is_empty() {
+        if state.username_input.is_empty() || state.password_input.is_empty() || state.label_input.is_empty() {
             state.error_password_modal = true;
         } else if !verify_password(&state.password_input).is_empty() {
             state.warning_password_modal = true;
@@ -169,7 +170,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 pub fn error_password_modal(ui: &imgui::Ui) {
-    ui.text("One of the required fields (username or password) is empty.");
+    ui.text("One of the required fields (username or password or Label) is empty.");
 
     if ui.button("OK") {
         ui.close_current_popup();
@@ -186,6 +187,7 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
             PasswordSafety::MissingNumbers => ui.text("- No numbers"),
             PasswordSafety::NoUpperCase => ui.text("- No uppercase letters"),
             PasswordSafety::NoLowerCase => ui.text("- No lowercase letters"),
+            PasswordSafety::TooFewWords => ui.text("- Passphrase too short (minimum 4 words)"),
         };
     }
 
@@ -215,6 +217,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
         username: std::mem::take(&mut state.username_input),
         password: std::mem::take(&mut state.password_input),
         notes: std::mem::take(&mut state.notes_input),
+        url: std::mem::take(&mut state.url_input),
         totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
     };
 
@@ -265,6 +268,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     ui.input_text("Label", &mut state.label_input).build();
+    ui.input_text("URL / WEBSITE", &mut state.url_input).build();
     ui.input_text("Username", &mut state.username_input).build();
     ui.input_text("Password", &mut state.password_input).build();
 
@@ -284,6 +288,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
             username: state.username_input.clone(),
             password: state.password_input.clone(),
             notes: state.notes_input.clone(),
+            url: state.url_input.clone(),
             totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
         };
         if let Some(key) = &state.encryption_key

@@ -19,6 +19,8 @@ pub struct PasswordEntry {
     pub password: String,
     pub notes: String,
     pub totp_secret: Option<String>,
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +35,7 @@ pub enum PasswordSafety {
     MissingSpecialChars,
     NoLowerCase,
     NoUpperCase,
+    TooFewWords,
 }
 
 pub struct AppState {
@@ -61,6 +64,7 @@ pub struct AppState {
     pub master_input: String,
     pub delete_line_input: String,
     pub edit_line_input: String,
+    pub url_input: String,
 
     // Password generator
     pub gen_mode: GenMode,
@@ -87,6 +91,20 @@ pub struct AppState {
 }
 
 pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
+    let words: Vec<&str> = password
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let is_passphrase = words.len() >= 2
+        && words.iter().all(|w| w.chars().all(|c| c.is_ascii_lowercase()));
+
+    if is_passphrase {
+        if words.len() < 4 {
+            return vec![PasswordSafety::TooFewWords];
+        }
+        return vec![];
+    }
+
     let mut issues = Vec::new();
 
     if password.len() < 15 {
@@ -203,6 +221,7 @@ impl AppState {
             master_input: String::new(),
             delete_line_input: String::with_capacity(256),
             edit_line_input: String::with_capacity(256),
+            url_input: String::with_capacity(256),
 
             gen_mode: GenMode::Password,
             password_length: 24,
@@ -329,11 +348,10 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
                             ui.group(|| {
                                 let totp_suffix = totp_code.as_deref().map(|c| format!(" | TOTP: {}", c)).unwrap_or_default();
-                                if entry.notes.is_empty() {
-                                    ui.text(format!("[{}] {}{}", entry.label, entry.username, totp_suffix));
-                                } else {
-                                    ui.text(format!("[{}] {} ? {}{}", entry.label, entry.username, &entry.notes, totp_suffix));
-                                }
+
+                                let url_part = if entry.url.is_empty() { String::new() } else { format!(" @ {}", entry.url) };
+                                let notes_part = if entry.notes.is_empty() { String::new() } else { format!(" ? {}", entry.notes) };
+                                ui.text(format!("[{}]{} | {}{}{}", entry.label, url_part, entry.username, notes_part, totp_suffix));
                             });
 
                             if ui.is_item_clicked() {
@@ -348,10 +366,10 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
                             if ui.is_item_hovered() {
                                 ui.tooltip(|| {
-                                    ui.text(&entry.password);
-                                    ui.separator();
                                     ui.text("Left click to copy the password.");
+                                    ui.separator();
                                     ui.text("Right click to copy the username.");
+                                    ui.separator();
                                     ui.text("Middle click to copy the TOTP.");
                                 });
                             }
