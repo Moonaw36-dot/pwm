@@ -45,6 +45,8 @@ fn apply_theme(style: &mut imgui::Style) {
     style.anti_aliased_lines = true;
     style.anti_aliased_fill = true;
     style.frame_padding = [6.0, 3.0];
+    style.window_padding = [6.0, 3.0];
+
 
     let c = &mut style.colors;
     c[imgui::StyleColor::WindowBg as usize]         = [0.10, 0.10, 0.10, 1.0];
@@ -68,6 +70,7 @@ fn apply_theme(style: &mut imgui::Style) {
     c[imgui::StyleColor::ResizeGrip as usize]        = [0.12, 0.12, 0.12, 1.0];
     c[imgui::StyleColor::ResizeGripActive as usize]  = [0.14, 0.14, 0.14, 1.0];
     c[imgui::StyleColor::ResizeGripHovered as usize] = [0.15, 0.15, 0.15, 1.0];
+
 }
 
 fn main() {

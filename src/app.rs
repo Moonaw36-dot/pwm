@@ -228,6 +228,10 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     ui.text("Welcome to Moonaw's password manager, fully written in Rust.");
                     ui.separator();
 
+                    if state.store.is_none(){
+                        ui.text("Open a file to get started.");
+                    }
+
                     if let Some(store) = &state.store {
                         ui.input_text("Search", &mut state.password_search_input).build();
 
@@ -296,6 +300,11 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                 });
 
                 imgui::TabItem::new("Add").build(ui, || {
+                    if state.store.is_none(){
+                        ui.text("Open a file to get started.");
+                        return;
+                    }
+
                     ui.text("Add passwords to your current password list.");
 
                     if state.store.is_some() && ui.button("Add new password") {
@@ -304,6 +313,11 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                 });
 
                 imgui::TabItem::new("Delete").build(ui, || {
+                    if state.store.is_none(){
+                        ui.text("Open a file to get started.");
+                        return;
+                    }
+
                     ui.text("Delete passwords.");
                     if let Some(store) = &state.store {
                         render_entry_list(ui, store);
@@ -326,6 +340,11 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                 });
 
                 imgui::TabItem::new("Modify").build(ui, || {
+                    if state.store.is_none(){
+                        ui.text("Open a file to get started.");
+                        return;
+                    }
+
                     ui.text("Modify passwords.");
                     if let Some(store) = &state.store {
                         render_entry_list(ui, store);
