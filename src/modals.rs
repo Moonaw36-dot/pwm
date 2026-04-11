@@ -1,3 +1,4 @@
+use zeroize::Zeroize;
 use crate::app::{generate_passphrase, generate_password, verify_password, AppState, GenMode, PasswordEntry, PasswordSafety, StrengthResult};
 use crate::file_ops::{create_file, load_store, save_store};
 
@@ -89,7 +90,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Label##add", &mut state.label_input).build();
     ui.input_text("URL / Website##add", &mut state.url_input).build();
     ui.input_text("Username##add", &mut state.username_input).build();
-    ui.input_text("Password##add", &mut state.password_input).build();
+    ui.input_text("Password##add", &mut state.password_input).password(true).build();
 
     let pw = state.password_input.clone();
     let strength = state.cached_strength(&pw);
@@ -143,7 +144,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
             match create_file(&filename, state) {
                 Ok(_) => {
                     state.filename_input.clear();
-                    state.master_input.clear();
+                    state.master_input.zeroize();
                     state.master_mode_is_create = false;
                     ui.close_current_popup();
                 }
@@ -156,14 +157,14 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
         {
             state.store = Some(store);
             state.encryption_key = Some(key);
-            state.master_input.clear();
+            state.master_input.zeroize();
             ui.close_current_popup();
         }
     }
 
     ui.same_line();
     if ui.button("Cancel") {
-        state.master_input.clear();
+        state.master_input.zeroize();
         state.master_mode_is_create = false;
         state.selected_file = None;
         state.selected_file_name.clear();
@@ -273,7 +274,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Label", &mut state.label_input).build();
     ui.input_text("URL / Website", &mut state.url_input).build();
     ui.input_text("Username", &mut state.username_input).build();
-    ui.input_text("Password", &mut state.password_input).build();
+    ui.input_text("Password", &mut state.password_input).password(true).build();
 
     let pw = state.password_input.clone();
     let strength = state.cached_strength(&pw);
