@@ -57,6 +57,7 @@ pub struct AppState {
     pub filename_modal: bool,
     pub master_modal: bool,
     pub master_mode_is_create: bool,
+    pub confirm_delete_modal: bool,
 
     // Input buffers
     pub label_input: String,
@@ -83,8 +84,9 @@ pub struct AppState {
     pub clipboard: Clipboard,
     pub clipboard_clear_at: Option<Instant>,
 
-    // Edit state
+    // Edit/delete state
     pub edit_index: Option<usize>,
+    pub delete_idx: Option<usize>,
 
     // Transient UI state
     pub copied_field: Option<String>,
@@ -215,6 +217,7 @@ impl AppState {
             filename_modal: false,
             master_modal: false,
             master_mode_is_create: false,
+            confirm_delete_modal: false,
 
             label_input: String::with_capacity(256),
             username_input: String::with_capacity(256),
@@ -239,6 +242,7 @@ impl AppState {
             clipboard_clear_at: None,
 
             edit_index: None,
+            delete_idx: None,
 
             copied_field: None,
             copied_clear_at: None,
@@ -420,17 +424,14 @@ fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.text("Delete passwords.");
 
-    let mut remove_idx = None;
     if let Some(store) = &mut state.store {
         for (i, entry) in store.entries.iter().enumerate() {
             ui.text(format!("{} - {}", entry.label, entry.username));
             ui.same_line();
             if ui.button(format!("Remove##remove{}", i)) {
-                remove_idx = Some(i);
+                state.confirm_delete_modal = true;
+                state.delete_idx = Some(i);
             }
-        }
-        if let Some(idx) = remove_idx {
-            store.entries.remove(idx);
         }
     }
 }
@@ -584,6 +585,15 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
     // Modal dispatch — flags are set on one frame, open_popup is called on the next.
     // imgui requires this two-frame pattern to nest popups correctly.
+
+    if state.confirm_delete_modal{
+        ui.open_popup("Confirm Delete");
+        state.confirm_delete_modal = false;
+    }
+
+    if let Some(_token) = ui.begin_modal_popup("Confirm Delete"){
+        crate::modals::confirm_delete_modal(ui, state);
+    }
 
     if state.master_modal {
         ui.open_popup("Master password");
