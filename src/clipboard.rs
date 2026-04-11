@@ -38,7 +38,7 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
     utf16.push(0);
 
     unsafe {
-        if OpenClipboard(0) == 0 {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
             return Err(());
         }
         EmptyClipboard();
@@ -46,7 +46,7 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
         // Allocate global memory and write the text
         let byte_len = utf16.len() * size_of::<u16>();
         let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len);
-        if hmem == 0 {
+        if hmem.is_null() {
             CloseClipboard();
             return Err(());
         }
@@ -67,7 +67,7 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
             .collect();
         let fmt = RegisterClipboardFormatW(fmt_name.as_ptr());
         if fmt != 0 {
-            SetClipboardData(fmt, 0);
+            SetClipboardData(fmt, std::ptr::null_mut());
         }
 
         CloseClipboard();
