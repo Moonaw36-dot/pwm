@@ -3,6 +3,7 @@ use rand::Rng;
 use argon2::Argon2;
 use aes_gcm::{Aes256Gcm, KeyInit, AeadCore};
 use aes_gcm::aead::{Aead, OsRng};
+use zeroize::Zeroizing;
 use crate::app::{AppState, PasswordList};
 
 const SALT_LEN: usize = 16;
@@ -20,9 +21,9 @@ pub fn open_file_dialog() -> Option<(String, PathBuf)> {
     Some((name, path))
 }
 
-fn derive_key(password: &str, salt: &[u8; 16]) -> [u8; 32] {
-    let mut key = [0u8; 32];
-    let _ = Argon2::default().hash_password_into(password.as_bytes(), salt, &mut key);
+fn derive_key(password: &str, salt: &[u8; 16]) -> Zeroizing<[u8; 32]> {
+    let mut key = Zeroizing::new([0u8; 32]);
+    let _ = Argon2::default().hash_password_into(password.as_bytes(), salt, &mut *key);
     key
 }
 
@@ -51,7 +52,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     rand::rng().fill_bytes(&mut salt);
 
     let key = derive_key(&state.master_input, &salt);
-    let filedata = encrypt_store(&empty_store, &key, &salt)?;
+    let filedata = encrypt_store(&empty_store, &*key, &salt)?;
     std::fs::write(&path, filedata).map_err(|e| e.to_string())?;
 
     state.store = Some(empty_store);
@@ -61,7 +62,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     Ok(())
 }
 
-pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, [u8; 32])> {
+pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
     let data = std::fs::read(path).ok()?;
     if data.len() < HEADER_LEN + 1 {
         return None;
@@ -72,7 +73,7 @@ pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, [u8; 
     let ciphertext = &data[HEADER_LEN..];
 
     let key = derive_key(password, &salt);
-    let cipher = Aes256Gcm::new(&key.into());
+    let cipher = Aes256Gcm::new((&*key).into());
     let plaintext = cipher.decrypt(&nonce_bytes.into(), ciphertext).ok()?;
 
     let json = String::from_utf8(plaintext).ok()?;

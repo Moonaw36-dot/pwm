@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 use serde::{Serialize, Deserialize};
+use zeroize::Zeroizing;
 use crate::file_ops::open_file_dialog;
 use arboard::Clipboard;
 
@@ -42,7 +43,7 @@ pub struct AppState {
     pub selected_file_name: String,
     pub selected_file: Option<PathBuf>,
     pub store: Option<PasswordList>,
-    pub encryption_key: Option<[u8; 32]>,
+    pub encryption_key: Option<Zeroizing<[u8; 32]>>,
 
     // Modal flags
     pub add_password_modal: bool,
@@ -61,7 +62,7 @@ pub struct AppState {
     pub totp_input: String,
     pub password_search_input: String,
     pub filename_input: String,
-    pub master_input: String,
+    pub master_input: Zeroizing<String>,
     pub url_input: String,
 
     // Password generator
@@ -214,7 +215,7 @@ impl AppState {
             totp_input: String::with_capacity(256),
             password_search_input: String::with_capacity(256),
             filename_input: String::with_capacity(256),
-            master_input: String::new(),
+            master_input: Zeroizing::new(String::new()),
             url_input: String::with_capacity(256),
 
             gen_mode: GenMode::Password,
