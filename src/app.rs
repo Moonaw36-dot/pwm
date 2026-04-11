@@ -45,9 +45,12 @@ pub struct AppState {
     pub store: Option<PasswordList>,
     pub encryption_key: Option<Zeroizing<[u8; 32]>>,
     pub last_activity: Instant,
+    pub lock_timeout_secs: u64,
 
     // Modal flags
     pub add_password_modal: bool,
+    pub settings_modal: bool,
+    pub settings_timeout_mins: i32,
     pub error_password_modal: bool,
     pub warning_password_modal: bool,
     pub gen_password_modal: bool,
@@ -201,8 +204,11 @@ impl AppState {
             store: None,
             encryption_key: None,
             last_activity: Instant::now(),
+            lock_timeout_secs: crate::config::load().lock_timeout_secs,
 
             add_password_modal: false,
+            settings_modal: false,
+            settings_timeout_mins: 0,
             error_password_modal: false,
             warning_password_modal: false,
             gen_password_modal: false,
@@ -467,12 +473,13 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         state.copied_field = None;
     }
 
-    if state.last_activity.elapsed().as_secs() > 5 {
-        state.encryption_key = None;
-        state.master_input = Zeroizing::new(String::new());
-        state.master_modal = true;
+    if state.store.is_some()
+        && state.lock_timeout_secs > 0
+        && state.last_activity.elapsed().as_secs() >= state.lock_timeout_secs
+    {
         state.store = None;
-
+        state.encryption_key = None;
+        state.master_modal = true;
         state.last_activity = Instant::now();
     }
 
@@ -490,6 +497,11 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     }
                     if ui.menu_item("Close") {
                         state.close_file();
+                    }
+                    ui.separator();
+                    if ui.menu_item("Settings") {
+                        state.settings_timeout_mins = (state.lock_timeout_secs / 60) as i32;
+                        state.settings_modal = true;
                     }
                 });
             });
@@ -591,5 +603,13 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     }
     if let Some(_token) = ui.begin_modal_popup("Error modal") {
         crate::modals::custom_error_modal(ui, state);
+    }
+
+    if state.settings_modal {
+        ui.open_popup("Settings");
+        state.settings_modal = false;
+    }
+    if let Some(_token) = ui.begin_modal_popup("Settings") {
+        crate::modals::settings_modal(ui, state);
     }
 }
