@@ -228,10 +228,6 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     ui.text("Welcome to Moonaw's password manager, fully written in Rust.");
                     ui.separator();
 
-                    if state.store.is_none(){
-                        ui.text("Open a file to get started.");
-                    }
-
                     if let Some(store) = &state.store {
                         ui.input_text("Search", &mut state.password_search_input).build();
 
@@ -296,6 +292,8 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                             ui.separator();
                             ui.text(format!("The {} has been copied to the clipboard!", field));
                         }
+                    } else {
+                        ui.text("Open a file to get started.");
                     }
                 });
 
@@ -307,7 +305,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
                     ui.text("Add passwords to your current password list.");
 
-                    if state.store.is_some() && ui.button("Add new password") {
+                    if ui.button("Add new password") {
                         state.add_password_modal = true;
                     }
                 });
@@ -319,9 +317,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     }
 
                     ui.text("Delete passwords.");
-                    if let Some(store) = &state.store {
-                        render_entry_list(ui, store);
-                    }
+                    render_entry_list(ui, state.store.as_ref().unwrap());
                     if ui.input_text("Entry to delete", &mut state.delete_line_input)
                         .enter_returns_true(true)
                         .build()
@@ -346,9 +342,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     }
 
                     ui.text("Modify passwords.");
-                    if let Some(store) = &state.store {
-                        render_entry_list(ui, store);
-                    }
+                    render_entry_list(ui, state.store.as_ref().unwrap());
                     if ui.input_text("Entry to modify", &mut state.edit_line_input)
                         .enter_returns_true(true)
                         .build()
