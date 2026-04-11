@@ -253,6 +253,34 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
+pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
+    ui.dummy([300.0, 0.0]);
+
+    ui.slider("Auto-lock timeout (minutes)", 0, 120, &mut state.settings_timeout_mins);
+    if state.settings_timeout_mins == 0 {
+        ui.text_disabled("Auto-lock is disabled.");
+    } else {
+        ui.text_disabled(format!(
+            "Vault locks after {} minute{}.",
+            state.settings_timeout_mins,
+            if state.settings_timeout_mins == 1 { "" } else { "s" }
+        ));
+    }
+
+    ui.separator();
+
+    if ui.button("Save") {
+        state.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
+        crate::config::save(&crate::config::Config { lock_timeout_secs: state.lock_timeout_secs });
+        ui.close_current_popup();
+    }
+
+    ui.same_line();
+    if ui.button("Cancel##settings") {
+        ui.close_current_popup();
+    }
+}
+
 pub fn custom_error_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([400.0, 0.0]);
     ui.text("Uh oh! The app has encountered an error.");

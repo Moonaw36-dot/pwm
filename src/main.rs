@@ -1,5 +1,6 @@
 mod app;
 mod clipboard;
+mod config;
 mod file_ops;
 mod input;
 mod modals;
