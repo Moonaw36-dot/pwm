@@ -15,14 +15,12 @@ A minimalist desktop password manager built in Rust. Passwords are stored in an 
 
 ## Building
 
-Requires the Rust nightly toolchain (edition 2024), OpenGL drivers, and the [Inter](https://rsms.me/inter/) font.
+Requires Rust (edition 2024) and OpenGL drivers. The Inter font is bundled in the repo.
 
 ```bash
 cargo build --release
 ./target/release/pwm
 ```
-
-> **Note:** The font path in `src/main.rs` is hardcoded. Update the `include_bytes!` path on line 126 to point to your local Inter font file before building.
 
 ## How it works
 

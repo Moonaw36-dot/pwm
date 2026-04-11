@@ -126,7 +126,7 @@ fn main() {
     let hidpi = platform.hidpi_factor();
     let font_size = (15.0 * hidpi) as f32;
     imgui_ctx.fonts().add_font(&[imgui::FontSource::TtfData {
-        data: include_bytes!("/home/moonaw/Downloads/Inter/static/Inter_24pt-Regular.ttf"),
+        data: include_bytes!("../assets/Inter_24pt-Regular.ttf"),
         size_pixels: font_size,
         config: Some(imgui::FontConfig {
             oversample_h: 2,
