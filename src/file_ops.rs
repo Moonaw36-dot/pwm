@@ -22,28 +22,27 @@ pub fn open_file_dialog() -> Option<(String, PathBuf)> {
 
 fn derive_key(password: &str, salt: &[u8; 16]) -> [u8; 32] {
     let mut key = [0u8; 32];
-    Argon2::default()
-        .hash_password_into(password.as_bytes(), salt, &mut key)
-        .expect("key derivation failed");
+    // Argon2::hash_password_into is generally infallible if the output buffer is large enough
+    let _ = Argon2::default().hash_password_into(password.as_bytes(), salt, &mut key);
     key
 }
 
-fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Vec<u8> {
-    let json = serde_json::to_string_pretty(store).expect("failed to serialize");
+fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Vec<u8>, String> {
+    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-    let ciphertext = cipher.encrypt(&nonce, json.as_bytes()).expect("encryption failed");
+    let ciphertext = cipher.encrypt(&nonce, json.as_bytes()).map_err(|e| e.to_string())?;
 
     let mut out = Vec::with_capacity(HEADER_LEN + ciphertext.len());
     out.extend_from_slice(salt);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ciphertext);
-    out
+    Ok(out)
 }
 
-pub fn create_file(file_name: &str, state: &mut AppState) {
+pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> {
     let Some(dir) = rfd::FileDialog::new().set_directory(".").pick_folder() else {
-        return;
+        return Ok(());
     };
 
     let path = dir.join(format!("{file_name}.json"));
@@ -53,13 +52,14 @@ pub fn create_file(file_name: &str, state: &mut AppState) {
     rand::rng().fill_bytes(&mut salt);
 
     let key = derive_key(&state.master_input, &salt);
-    let filedata = encrypt_store(&empty_store, &key, &salt);
-    std::fs::write(&path, filedata).expect("failed to write");
+    let filedata = encrypt_store(&empty_store, &key, &salt)?;
+    std::fs::write(&path, filedata).map_err(|e| e.to_string())?;
 
     state.store = Some(empty_store);
     state.encryption_key = Some(key);
     state.selected_file = Some(path);
     state.selected_file_name = file_name.to_string();
+    Ok(())
 }
 
 pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, [u8; 32])> {
@@ -82,15 +82,16 @@ pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, [u8; 
     Some((store, key))
 }
 
-pub fn save_store(path: &Option<PathBuf>, store: &PasswordList, key: &[u8; 32]) {
-    let Some(p) = path else { return };
+pub fn save_store(path: &Option<PathBuf>, store: &PasswordList, key: &[u8; 32]) -> Result<(), String> {
+    let Some(p) = path else { return Ok(()) };
 
-    let existing = match std::fs::read(p) {
-        Ok(d) if d.len() >= SALT_LEN => d,
-        _ => return,
-    };
+    let existing = std::fs::read(p).map_err(|e| e.to_string())?;
+    if existing.len() < SALT_LEN {
+        return Err("File is too short to be a valid store".to_string());
+    }
     let salt = &existing[..SALT_LEN];
 
-    let filedata = encrypt_store(store, key, salt);
-    std::fs::write(p, filedata).ok();
+    let filedata = encrypt_store(store, key, salt)?;
+    std::fs::write(p, filedata).map_err(|e| e.to_string())?;
+    Ok(())
 }
