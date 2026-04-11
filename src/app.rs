@@ -308,44 +308,65 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                 }
             }
 
+            let url_clicked = std::cell::Cell::new(false);
             ui.group(|| {
                 let totp_suffix = totp_code.as_deref()
                     .map(|c| format!(" | TOTP: {}", c))
                     .unwrap_or_default();
-                let url_part = if entry.url.is_empty() {
-                    String::new()
-                } else {
-                    format!(" @ {}", entry.url)
-                };
+
                 let notes_part = if entry.notes.is_empty() {
                     String::new()
                 } else {
                     format!(" ? {}", entry.notes)
                 };
+
                 ui.text(format!(
-                    "[{}]{} | {}{}{}",
-                    entry.label, url_part, entry.username, notes_part, totp_suffix
+                    "[{}] | {}{}{}",
+                    entry.label, entry.username, notes_part, totp_suffix
                 ));
+
+                if !entry.url.is_empty() {
+                    ui.same_line();
+
+                    let link_color = [0.27, 0.67, 1.0, 1.0];
+                    let _color = ui.push_style_color(imgui::StyleColor::Text, link_color);
+                    ui.text(format!("@ {}", entry.url));
+
+                    drop(_color);
+
+                    if ui.is_item_clicked() {
+                        url_clicked.set(true);
+                        let _ = open::that(&entry.url);
+                    }
+                    if ui.is_item_hovered() {
+                        ui.tooltip(|| {
+                            ui.text("Click to open in browser.");
+                            ui.separator();
+                        })
+                    }
+                }
             });
 
-            if ui.is_item_clicked() {
-                pending_copy = Some((entry.password.clone(), "password"));
-            } else if ui.is_item_clicked_with_button(imgui::MouseButton::Right) {
-                pending_copy = Some((entry.username.clone(), "username"));
-            } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
-                && let Some(code) = totp_code
-            {
-                pending_copy = Some((code, "TOTP code"));
-            }
+            if !url_clicked.get() {
+                if ui.is_item_clicked() {
+                    pending_copy = Some((entry.password.clone(), "password"));
+                } else if ui.is_item_clicked_with_button(imgui::MouseButton::Right) {
+                    pending_copy = Some((entry.username.clone(), "username"));
+                } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
+                    && let Some(code) = totp_code
+                {
+                    pending_copy = Some((code, "TOTP code"));
+                }
 
-            if ui.is_item_hovered() {
-                ui.tooltip(|| {
-                    ui.text("Left click to copy the password.");
-                    ui.separator();
-                    ui.text("Right click to copy the username.");
-                    ui.separator();
-                    ui.text("Middle click to copy the TOTP.");
-                });
+                if ui.is_item_hovered() {
+                    ui.tooltip(|| {
+                        ui.text("Left click to copy the password.");
+                        ui.separator();
+                        ui.text("Right click to copy the username.");
+                        ui.separator();
+                        ui.text("Middle click to copy the TOTP.");
+                    });
+                }
             }
         }
     }
@@ -475,7 +496,20 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                 imgui::TabItem::new("About").build(ui, || {
                     ui.text("This is a password manager written in Rust, by Moonaw.");
                     ui.separator();
+
+                    let link_color = [0.27, 0.67, 1.0, 1.0];
+                    let _color = ui.push_style_color(imgui::StyleColor::Text, link_color);
                     ui.text("https://moonaw.org");
+
+                    drop(_color);
+
+                    if ui.is_item_clicked(){
+                        open::that("https://moonaw.org").unwrap();
+                    }
+
+                    if ui.is_item_hovered(){
+                        ui.tooltip(|| ui.text("Click to open the link in browser."));
+                    }
                 });
             });
         });
