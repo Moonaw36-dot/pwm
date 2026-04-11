@@ -71,6 +71,7 @@ pub struct AppState {
     // Transient UI state
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
+    pub custom_error_message: Option<String>,
 }
 
 pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
@@ -154,6 +155,7 @@ impl AppState {
 
             copied_field: None,
             copied_clear_at: None,
+            custom_error_message: None,
         }
     }
 
@@ -322,9 +324,10 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                             && idx < store.entries.len()
                         {
                             store.entries.remove(idx);
-                            if let Some(key) = &state.encryption_key {
-                                save_store(&state.selected_file, store, key);
-                            }
+                            if let Some(key) = &state.encryption_key
+                                && let Err(e) = save_store(&state.selected_file, store, key) {
+                                    state.custom_error_message = Some(e);
+                                }
                         }
                         state.delete_line_input.clear();
                     }
@@ -422,4 +425,13 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(_token) = ui.begin_modal_popup("Modify entry") {
         crate::modals::modify_entry_modal(ui, state);
     }
+
+    if state.custom_error_message.is_some() {
+        ui.open_popup("Error modal");
+    }
+    if let Some(_token) = ui.begin_modal_popup("Error modal") {
+        crate::modals::custom_error_modal(ui, state);
+    }
 }
+
+

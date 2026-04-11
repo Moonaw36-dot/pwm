@@ -81,11 +81,17 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     if ui.button(button_label) {
         if state.master_mode_is_create {
             let filename = state.filename_input.clone();
-            create_file(&filename, state);
-            state.filename_input.clear();
-            state.master_input.clear();
-            state.master_mode_is_create = false;
-            ui.close_current_popup();
+            match create_file(&filename, state) {
+                Ok(_) => {
+                    state.filename_input.clear();
+                    state.master_input.clear();
+                    state.master_mode_is_create = false;
+                    ui.close_current_popup();
+                }
+                Err(e) => {
+                    state.custom_error_message = Some(e);
+                }
+            }
         } else if let Some(path) = &state.selected_file
             && let Some((store, key)) = load_store(path, &state.master_input.clone())
         {
@@ -159,9 +165,10 @@ fn add_entry_from_inputs(state: &mut AppState) {
 
     if let Some(store) = &mut state.store {
         store.entries.push(entry);
-        if let Some(key) = &state.encryption_key {
-            save_store(&state.selected_file, store, key);
-        }
+        if let Some(key) = &state.encryption_key
+            && let Err(e) = save_store(&state.selected_file, store, key) {
+                state.custom_error_message = Some(e);
+            }
     }
 }
 
@@ -180,6 +187,19 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.same_line();
     if ui.button("Cancel##filename") {
+        ui.close_current_popup();
+    }
+}
+
+pub fn custom_error_modal(ui: &imgui::Ui, state: &mut AppState) {
+    ui.dummy([400.0, 0.0]);
+    ui.text("Uh oh! The app has encountered an error.");
+    if let Some(err) = &state.custom_error_message {
+        ui.text_colored([1.0, 0.0, 0.0, 1.0], format!("Error: {}", err));
+    }
+
+    if ui.button("Close") {
+        state.custom_error_message = None;
         ui.close_current_popup();
     }
 }
@@ -206,9 +226,10 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
             notes: state.notes_input.clone(),
             totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
         };
-        if let Some(key) = &state.encryption_key {
-            save_store(&state.selected_file, store, key);
-        }
+        if let Some(key) = &state.encryption_key
+            && let Err(e) = save_store(&state.selected_file, store, key) {
+                state.custom_error_message = Some(e);
+            }
         state.edit_index = None;
         ui.close_current_popup();
     }
