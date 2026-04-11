@@ -20,6 +20,7 @@ pub struct PasswordEntry {
     pub password: String,
     pub notes: String,
     pub totp_secret: Option<String>,
+    pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub url: String,
 }
@@ -69,6 +70,7 @@ pub struct AppState {
     pub filename_input: String,
     pub master_input: Zeroizing<String>,
     pub url_input: String,
+    pub tag_input: String,
 
     // Password generator
     pub gen_mode: GenMode,
@@ -228,6 +230,7 @@ impl AppState {
             filename_input: String::with_capacity(256),
             master_input: Zeroizing::new(String::new()),
             url_input: String::with_capacity(256),
+            tag_input: String::with_capacity(256),
 
             gen_mode: GenMode::Password,
             password_length: 24,
@@ -344,9 +347,13 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                     format!(" ? {}", entry.notes)
                 };
 
+                let tags_part = entry.tags.as_deref()
+                    .map(|t| format!("[{}] ", t.join(", ")))
+                    .unwrap_or_default();
+
                 ui.text(format!(
-                    "[{}] | {}{}{}",
-                    entry.label, entry.username, notes_part, totp_suffix
+                    "{}[{}] | {}{}{}",
+                    tags_part, entry.label, entry.username, notes_part, totp_suffix
                 ));
 
                 if !entry.url.is_empty() {
@@ -469,6 +476,7 @@ fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
         state.totp_input = entry.totp_secret.clone().unwrap_or_default();
         state.url_input = entry.url.clone();
         state.edit_index = Some(idx);
+        state.tag_input = entry.tags.as_deref().map(|t| t.join(", ")).unwrap_or_default();
     }
 }
 
