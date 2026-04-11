@@ -17,6 +17,8 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
         ui.close_current_popup();
     }
 
+    ui.same_line();
+
     if ui.button("No"){
         ui.close_current_popup();
     }
@@ -108,9 +110,11 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([400.0, 0.0]);
 
     ui.input_text("Label##add", &mut state.label_input).build();
+    ui.input_text("Tag##add", &mut state.tag_input).build();
     ui.input_text("URL / Website##add", &mut state.url_input).build();
     ui.input_text("Username##add", &mut state.username_input).build();
     ui.input_text("Password##add", &mut state.password_input).password(true).build();
+    
 
     let pw = state.password_input.clone();
     let strength = state.cached_strength(&pw);
@@ -230,6 +234,14 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
+fn parse_tags(s: String) -> Option<Vec<String>> {
+    let v: Vec<String> = s.split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if v.is_empty() { None } else { Some(v) }
+}
+
 fn sanitize_totp(s: String) -> Option<String> {
     let s = s.trim().replace(' ', "").to_uppercase();
     if s.is_empty() { None } else { Some(s) }
@@ -243,6 +255,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
         notes: std::mem::take(&mut state.notes_input),
         url: std::mem::take(&mut state.url_input),
         totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
+        tags: parse_tags(state.tag_input.clone()),
     };
 
     if let Some(store) = &mut state.store {
@@ -320,6 +333,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     ui.input_text("Label", &mut state.label_input).build();
+    ui.input_text("Tag", &mut state.tag_input).build();
     ui.input_text("URL / Website", &mut state.url_input).build();
     ui.input_text("Username", &mut state.username_input).build();
     ui.input_text("Password", &mut state.password_input).password(true).build();
@@ -345,6 +359,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
             notes: state.notes_input.clone(),
             url: state.url_input.clone(),
             totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
+            tags: parse_tags(std::mem::take(&mut state.tag_input)),
         };
         if let Some(key) = &state.encryption_key
             && let Err(e) = save_store(&state.selected_file, store, key) {
