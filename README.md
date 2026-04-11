@@ -63,4 +63,4 @@ All copied values are automatically cleared from the clipboard after 10 seconds.
 
 ## License
 
-This project is not yet licensed. All rights reserved.
+MIT — see [LICENSE](LICENSE).
