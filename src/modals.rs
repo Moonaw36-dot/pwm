@@ -291,6 +291,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
         state.username_input.clear();
         state.password_input.clear();
         state.notes_input.clear();
+        state.totp_input.clear();
         ui.close_current_popup();
     }
 }
