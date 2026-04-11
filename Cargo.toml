@@ -2,6 +2,7 @@
 name = "aegis"
 version = "1.2.0"
 edition = "2024"
+license = "LicenseRef-MIT-Attribution"
 
 [dependencies]
 totp-rs = "5.7.1"

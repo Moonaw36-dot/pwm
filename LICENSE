@@ -1,4 +1,4 @@
-MIT License
+MIT License (with Attribution Requirement)
 
 Copyright (c) 2026 moonaw
 
@@ -9,8 +9,15 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+2. Any product, service, application, or project that incorporates or is
+   derived from the Software must include a visible attribution to the original
+   author. This attribution must:
+   - Credit "moonaw" as the original author.
+   - Include a link to the original repository or project where reasonably
+     possible (e.g., in documentation, an "About" page, or credits section).
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
