@@ -13,6 +13,12 @@ cargo build --release
 
 There are no tests and no linter configuration beyond `cargo check`/`cargo clippy`.
 
+On Windows, build with:
+```bash
+cargo build --release --target x86_64-pc-windows-msvc
+./target/x86_64-pc-windows-msvc/release/pwm.exe
+```
+
 ## Architecture
 
 The app is a single-window imgui desktop app with an immediate-mode UI loop.
@@ -25,6 +31,6 @@ The app is a single-window imgui desktop app with an immediate-mode UI loop.
 5. `input.rs` — maps winit `Key` + `KeyLocation` to imgui keys. Exists because imgui-winit-support does not handle the keyboard correctly for this winit version.
 
 **Key constraints:**
-- Linux-only: clipboard auto-clear uses `arboard::SetExtLinux` (`.exclude_from_history()`).
+- Clipboard auto-clear excludes from history on Linux (`arboard::SetExtLinux`) and Windows (raw `ExcludeClipboardContentFromMonitorProcessing` API); macOS falls back to plain set.
 - No cloud sync, no import/export — vault is a single local encrypted JSON file.
 - `AppState` is the sole source of truth; it is passed by `&mut` through every render function each frame.

@@ -176,6 +176,16 @@ fn main() {
             platform.handle_event(imgui_ctx.io_mut(), &window, &event);
         }
 
+        if matches!(event, Event::WindowEvent {
+            event: WindowEvent::KeyboardInput { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseWheel { .. },
+            ..
+        }) {
+            state.last_activity = std::time::Instant::now();
+        }
+
         match event {
             Event::NewEvents(_) => {
                 imgui_ctx.io_mut().update_delta_time(last_frame.elapsed());

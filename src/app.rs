@@ -44,6 +44,7 @@ pub struct AppState {
     pub selected_file: Option<PathBuf>,
     pub store: Option<PasswordList>,
     pub encryption_key: Option<Zeroizing<[u8; 32]>>,
+    pub last_activity: Instant,
 
     // Modal flags
     pub add_password_modal: bool,
@@ -199,6 +200,7 @@ impl AppState {
             selected_file: None,
             store: None,
             encryption_key: None,
+            last_activity: Instant::now(),
 
             add_password_modal: false,
             error_password_modal: false,
@@ -283,6 +285,8 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
         ui.text("Open a file to get started.");
         return;
     }
+
+
 
     ui.input_text("Search", &mut state.password_search_input).build();
 
@@ -461,6 +465,15 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(clear_at) = state.copied_clear_at && Instant::now() >= clear_at {
         state.copied_clear_at = None;
         state.copied_field = None;
+    }
+
+    if state.last_activity.elapsed().as_secs() > 5 {
+        state.encryption_key = None;
+        state.master_input = Zeroizing::new(String::new());
+        state.master_modal = true;
+        state.store = None;
+
+        state.last_activity = Instant::now();
     }
 
     ui.window("Password Manager")
