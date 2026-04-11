@@ -228,12 +228,13 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     if let Some(store) = &state.store {
                         ui.input_text("Search", &mut state.password_search_input).build();
 
+                        let search_query = state.password_search_input.to_lowercase();
                         let mut pending_copy: Option<(String, &str)> = None;
 
                         for entry in &store.entries {
-                            if !state.password_search_input.is_empty()
-                                && !entry.label.contains(&state.password_search_input)
-                                && !entry.username.contains(&state.password_search_input)
+                            if !search_query.is_empty()
+                                && !entry.label.to_lowercase().contains(&search_query)
+                                && !entry.username.to_lowercase().contains(&search_query)
                             {
                                 continue;
                             }
