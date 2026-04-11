@@ -315,6 +315,7 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
             if !search_query.is_empty()
                 && !entry.label.to_lowercase().contains(&search_query)
                 && !entry.username.to_lowercase().contains(&search_query)
+                && !entry.tags.as_deref().unwrap_or(&[]).iter().any(|t| t.to_lowercase().contains(&search_query))
             {
                 continue;
             }
@@ -547,6 +548,13 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     }
                     if ui.menu_item("Close") {
                         state.close_file();
+                    }
+                    if ui.menu_item("Export to CSV") {
+                        if let Some(store) = &state.store {
+                            if let Err(e) = crate::file_ops::export_csv(store) {
+                                state.custom_error_message = Some(e);
+                            }
+                        }
                     }
                     ui.separator();
                     if ui.menu_item("Settings") {

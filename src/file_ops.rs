@@ -21,6 +21,40 @@ pub fn open_file_dialog() -> Option<(String, PathBuf)> {
     Some((name, path))
 }
 
+pub fn save_file_dialog() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("CSV", &["csv"])
+        .save_file()
+}
+
+pub fn export_csv(store: &PasswordList) -> Result<(), String> {
+    let Some(path) = save_file_dialog() else { return Ok(()) };
+
+    let mut csv = String::from("label,username,password,url,notes,tags\n");
+    for entry in &store.entries {
+        let tags = entry.tags.as_deref().map(|t| t.join(";")).unwrap_or_default();
+        csv.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            escape_csv(&entry.label),
+            escape_csv(&entry.username),
+            escape_csv(&entry.password),
+            escape_csv(&entry.url),
+            escape_csv(&entry.notes),
+            escape_csv(&tags),
+        ));
+    }
+
+    std::fs::write(&path, csv).map_err(|e| e.to_string())
+}
+
+fn escape_csv(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 fn derive_key(password: &str, salt: &[u8; 16]) -> Zeroizing<[u8; 32]> {
     let mut key = Zeroizing::new([0u8; 32]);
     let _ = Argon2::default().hash_password_into(password.as_bytes(), salt, &mut *key);

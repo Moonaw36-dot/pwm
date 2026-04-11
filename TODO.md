@@ -1,13 +1,4 @@
 # TODO
 
-## Features
-- [ ] Categories/tags — add `tags: Vec<String>` to `PasswordEntry`, tag filter in View tab
-- [ ] Entry timestamps — `created_at` and `modified_at` on `PasswordEntry`
-- [ ] Password history per entry — keep last N passwords per entry
-- [ ] Recent files list — persist last N opened vault paths in config, show in Files menu
-- [ ] CSV export — plaintext export for backup/migration
-
-## Polish
-- [X] Confirm dialog before deleting an entry
-- [X] Show entry count in View tab
-- [X] Keyboard shortcut for search focus (Ctrl+F)
+- [ ] CSV export — plaintext export for backup or migration to another manager
+- [ ] Recent files list — show last N opened vaults in the Files menu
