@@ -300,6 +300,8 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     let mut pending_copy: Option<(String, &'static str)> = None;
 
     if let Some(store) = &state.store {
+        ui.text(format!("Entry count: {}", store.entries.len()));
+
         for entry in &store.entries {
             if !search_query.is_empty()
                 && !entry.label.to_lowercase().contains(&search_query)
