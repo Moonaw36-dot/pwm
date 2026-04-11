@@ -309,6 +309,7 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
             }
 
             let mut totp_code: Option<String> = None;
+            let mut totp_timeout: Option<String> = None;
             if let Some(secret) = &entry.totp_secret {
                 use totp_rs::{Algorithm, Secret, TOTP};
                 if let Ok(bytes) = Secret::Encoded(secret.replace(" ", "").to_uppercase()).to_bytes()
@@ -316,13 +317,17 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                     && let Ok(code) = totp.generate_current()
                 {
                     totp_code = Some(code);
+                    totp_timeout = {
+                        Option::from(totp.ttl().unwrap().to_string())
+                    }
+
                 }
             }
 
             let url_clicked = std::cell::Cell::new(false);
             ui.group(|| {
                 let totp_suffix = totp_code.as_deref()
-                    .map(|c| format!(" | TOTP: {}", c))
+                    .map(|c| format!(" | TOTP: {} ({}s)", c, totp_timeout.as_deref().unwrap_or("?")))
                     .unwrap_or_default();
 
                 let notes_part = if entry.notes.is_empty() {
@@ -462,6 +467,38 @@ fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
+fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
+    if state.store.is_none() {
+        ui.text("Open a file to get started.");
+        return;
+    }
+
+    if let Some(store) = &mut state.store {
+        ui.text("Weak passwords:");
+        for entry in &store.entries {
+            let (score, _label, _) = manual_strength(&entry.password);
+            if score < 3{
+                ui.text(format!("{} - {}", entry.label, entry.username));
+            }
+        }
+        ui.separator();
+
+        use std::collections::HashMap;
+        let mut seen: HashMap<&str, Vec<&str>> = HashMap::new();
+
+        ui.text("Reused passwords:");
+        for entry in &store.entries {
+            seen.entry(entry.password.as_str()).or_default().push(entry.username.as_str());
+        }
+
+        for labels in seen.values() {
+            if labels.len() > 1 {
+                ui.text(format!("Reused by: {}", labels.join(", ")));
+            }
+        }
+    }
+}
+
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(clear_at) = state.clipboard_clear_at && Instant::now() >= clear_at {
         crate::clipboard::set_excluded_from_history(&mut state.clipboard, "");
@@ -518,6 +555,9 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                 });
                 imgui::TabItem::new("Modify").build(ui, || {
                     render_modify_tab(ui, state);
+                });
+                imgui::TabItem::new("Health").build(ui, || {
+                    render_health_tab(ui, state);
                 });
                 imgui::TabItem::new("About").build(ui, || {
                     ui.text("This is a password manager written in Rust, by Moonaw.");
