@@ -62,7 +62,6 @@ pub struct AppState {
     pub password_search_input: String,
     pub filename_input: String,
     pub master_input: String,
-    pub edit_line_input: String,
     pub url_input: String,
 
     // Password generator
@@ -216,7 +215,6 @@ impl AppState {
             password_search_input: String::with_capacity(256),
             filename_input: String::with_capacity(256),
             master_input: String::new(),
-            edit_line_input: String::with_capacity(256),
             url_input: String::with_capacity(256),
 
             gen_mode: GenMode::Password,
@@ -274,12 +272,7 @@ impl AppState {
     }
 }
 
-fn render_entry_list(ui: &imgui::Ui, store: &PasswordList) {
-    for (i, entry) in store.entries.iter().enumerate() {
-        ui.text(format!("{}. [{}] {}", i, entry.label, entry.username));
-    }
-    ui.separator();
-}
+
 
 fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Welcome to Moonaw's password manager, fully written in Rust.");
@@ -410,25 +403,30 @@ fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     ui.text("Modify passwords.");
-    render_entry_list(ui, state.store.as_ref().unwrap());
 
-    if ui.input_text("Entry to modify", &mut state.edit_line_input)
-        .enter_returns_true(true)
-        .build()
-    {
-        if let Ok(idx) = state.edit_line_input.trim().parse::<usize>()
-            && let Some(store) = &state.store
-            && idx < store.entries.len()
-        {
-            let entry = &store.entries[idx];
-            state.label_input = entry.label.clone();
-            state.username_input = entry.username.clone();
-            state.password_input = entry.password.clone();
-            state.notes_input = entry.notes.clone();
-            state.totp_input = entry.totp_secret.clone().unwrap_or_default();
-            state.edit_index = Some(idx);
+    let mut clicked_idx = None;
+    if let Some(store) = &state.store {
+        for (i, entry) in store.entries.iter().enumerate() {
+            ui.text(format!("{} - {}", entry.label, entry.username));
+            ui.same_line();
+            if ui.button(format!("Modify##modify{}", i)) {
+                clicked_idx = Some(i);
+            }
         }
-        state.edit_line_input.clear();
+    }
+
+    if let Some(idx) = clicked_idx
+        && let Some(store) = &state.store
+        && idx < store.entries.len()
+    {
+        let entry = &store.entries[idx];
+        state.label_input = entry.label.clone();
+        state.username_input = entry.username.clone();
+        state.password_input = entry.password.clone();
+        state.notes_input = entry.notes.clone();
+        state.totp_input = entry.totp_secret.clone().unwrap_or_default();
+        state.url_input = entry.url.clone();
+        state.edit_index = Some(idx);
     }
 }
 
