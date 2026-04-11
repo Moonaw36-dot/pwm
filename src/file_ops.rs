@@ -52,7 +52,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     rand::rng().fill_bytes(&mut salt);
 
     let key = derive_key(&state.master_input, &salt);
-    let filedata = encrypt_store(&empty_store, &*key, &salt)?;
+    let filedata = encrypt_store(&empty_store, &key, &salt)?;
     std::fs::write(&path, filedata).map_err(|e| e.to_string())?;
 
     state.store = Some(empty_store);
