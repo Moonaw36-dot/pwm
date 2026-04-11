@@ -48,7 +48,6 @@ fn apply_theme(style: &mut imgui::Style) {
     style.frame_padding = [6.0, 3.0];
     style.window_padding = [6.0, 3.0];
 
-
     let c = &mut style.colors;
     c[imgui::StyleColor::WindowBg as usize]         = [0.10, 0.10, 0.10, 1.0];
     c[imgui::StyleColor::ModalWindowDimBg as usize]  = [0.20, 0.20, 0.20, 0.3];

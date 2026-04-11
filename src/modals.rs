@@ -84,7 +84,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([400.0, 0.0]);
 
     ui.input_text("Label##add", &mut state.label_input).build();
-    ui.input_text("Url / website##add", &mut state.url_input).build();
+    ui.input_text("URL / Website##add", &mut state.url_input).build();
     ui.input_text("Username##add", &mut state.username_input).build();
     ui.input_text("Password##add", &mut state.password_input).build();
 
@@ -268,13 +268,13 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     ui.input_text("Label", &mut state.label_input).build();
-    ui.input_text("URL / WEBSITE", &mut state.url_input).build();
+    ui.input_text("URL / Website", &mut state.url_input).build();
     ui.input_text("Username", &mut state.username_input).build();
     ui.input_text("Password", &mut state.password_input).build();
 
     let pw = state.password_input.clone();
     let strength = state.cached_strength(&pw);
-    if ui.button("Generate password"){
+    if ui.button("Generate password") {
         state.gen_password_modal = true;
     }
     render_strength_bar(ui, strength);
