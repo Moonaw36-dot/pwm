@@ -2,6 +2,26 @@ use zeroize::Zeroize;
 use crate::app::{generate_passphrase, generate_password, verify_password, AppState, GenMode, PasswordEntry, PasswordSafety, StrengthResult};
 use crate::file_ops::{create_file, load_store, save_store};
 
+pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
+    ui.dummy([400.0, 0.0]);
+
+    ui.text("Are you sure you want to delete the password?");
+    if ui.button("Yes"){
+        if let (Some(idx), Some(store)) = (state.delete_idx, &mut state.store) {
+            store.entries.remove(idx);
+            if let Some(key) = &state.encryption_key {
+                let _ = save_store(&state.selected_file, store, key);
+            }
+        }
+        state.delete_idx = None;
+        ui.close_current_popup();
+    }
+
+    if ui.button("No"){
+        ui.close_current_popup();
+    }
+}
+
 pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([440.0, 0.0]);
 

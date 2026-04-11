@@ -8,6 +8,6 @@
 - [ ] CSV export — plaintext export for backup/migration
 
 ## Polish
-- [ ] Confirm dialog before deleting an entry
-- [ ] Show entry count in View tab
+- [X] Confirm dialog before deleting an entry
+- [X] Show entry count in View tab
 - [ ] Keyboard shortcut for search focus (Ctrl+F)
