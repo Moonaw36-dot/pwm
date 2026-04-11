@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 use serde::{Serialize, Deserialize};
-use crate::file_ops::{open_file_dialog, save_store};
+use crate::file_ops::open_file_dialog;
 use arboard::Clipboard;
 
 static WORDLIST: &str = include_str!("../assets/wordlist.txt");
@@ -62,7 +62,6 @@ pub struct AppState {
     pub password_search_input: String,
     pub filename_input: String,
     pub master_input: String,
-    pub delete_line_input: String,
     pub edit_line_input: String,
     pub url_input: String,
 
@@ -167,13 +166,11 @@ pub fn bits_to_strength(bits: f64) -> StrengthResult {
     }
 }
 
-
 pub fn manual_strength(password: &str) -> StrengthResult {
     if password.is_empty() {
         return (0, "—", [0.45, 0.45, 0.45, 1.0]);
     }
 
-    // Detect passphrase: 2+ purely lowercase-alpha words split by non-alpha chars
     let words: Vec<&str> = password
         .split(|c: char| !c.is_ascii_alphabetic())
         .filter(|s| !s.is_empty())
@@ -219,7 +216,6 @@ impl AppState {
             password_search_input: String::with_capacity(256),
             filename_input: String::with_capacity(256),
             master_input: String::new(),
-            delete_line_input: String::with_capacity(256),
             edit_line_input: String::with_capacity(256),
             url_input: String::with_capacity(256),
 
@@ -261,8 +257,9 @@ impl AppState {
 
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
         if let Some((ref cached_pw, result)) = self.strength_cache
-            && cached_pw == password {
-                return result;
+            && cached_pw == password
+        {
+            return result;
         }
         let result = manual_strength(password);
         self.strength_cache = Some((password.to_string(), result));
@@ -284,14 +281,163 @@ fn render_entry_list(ui: &imgui::Ui, store: &PasswordList) {
     ui.separator();
 }
 
+fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
+    ui.text("Welcome to Moonaw's password manager, fully written in Rust.");
+    ui.separator();
+
+    if state.store.is_none() {
+        ui.text("Open a file to get started.");
+        return;
+    }
+
+    ui.input_text("Search", &mut state.password_search_input).build();
+
+    let search_query = state.password_search_input.to_lowercase();
+    let mut pending_copy: Option<(String, &'static str)> = None;
+
+    if let Some(store) = &state.store {
+        for entry in &store.entries {
+            if !search_query.is_empty()
+                && !entry.label.to_lowercase().contains(&search_query)
+                && !entry.username.to_lowercase().contains(&search_query)
+            {
+                continue;
+            }
+
+            let mut totp_code: Option<String> = None;
+            if let Some(secret) = &entry.totp_secret {
+                use totp_rs::{Algorithm, Secret, TOTP};
+                if let Ok(bytes) = Secret::Encoded(secret.replace(" ", "").to_uppercase()).to_bytes()
+                    && let Ok(totp) = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes)
+                    && let Ok(code) = totp.generate_current()
+                {
+                    totp_code = Some(code);
+                }
+            }
+
+            ui.group(|| {
+                let totp_suffix = totp_code.as_deref()
+                    .map(|c| format!(" | TOTP: {}", c))
+                    .unwrap_or_default();
+                let url_part = if entry.url.is_empty() {
+                    String::new()
+                } else {
+                    format!(" @ {}", entry.url)
+                };
+                let notes_part = if entry.notes.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ? {}", entry.notes)
+                };
+                ui.text(format!(
+                    "[{}]{} | {}{}{}",
+                    entry.label, url_part, entry.username, notes_part, totp_suffix
+                ));
+            });
+
+            if ui.is_item_clicked() {
+                pending_copy = Some((entry.password.clone(), "password"));
+            } else if ui.is_item_clicked_with_button(imgui::MouseButton::Right) {
+                pending_copy = Some((entry.username.clone(), "username"));
+            } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
+                && let Some(code) = totp_code
+            {
+                pending_copy = Some((code, "TOTP code"));
+            }
+
+            if ui.is_item_hovered() {
+                ui.tooltip(|| {
+                    ui.text("Left click to copy the password.");
+                    ui.separator();
+                    ui.text("Right click to copy the username.");
+                    ui.separator();
+                    ui.text("Middle click to copy the TOTP.");
+                });
+            }
+        }
+    }
+
+    if let Some((text, field)) = pending_copy {
+        state.copy_to_clipboard(&text, field);
+    }
+
+    if let Some(field) = &state.copied_field {
+        ui.separator();
+        ui.text(format!("The {} has been copied to the clipboard!", field));
+    }
+}
+
+fn render_add_tab(ui: &imgui::Ui, state: &mut AppState) {
+    if state.store.is_none() {
+        ui.text("Open a file to get started.");
+        return;
+    }
+
+    ui.text("Add passwords to your current password list.");
+
+    if ui.button("Add new password") {
+        state.add_password_modal = true;
+    }
+}
+
+fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
+    if state.store.is_none() {
+        ui.text("Open a file to get started.");
+        return;
+    }
+
+    ui.text("Delete passwords.");
+
+    let mut remove_idx = None;
+    if let Some(store) = &mut state.store {
+        for (i, entry) in store.entries.iter().enumerate() {
+            ui.text(format!("{} - {}", entry.label, entry.username));
+            ui.same_line();
+            if ui.button(format!("Remove##remove{}", i)) {
+                remove_idx = Some(i);
+            }
+        }
+        if let Some(idx) = remove_idx {
+            store.entries.remove(idx);
+        }
+    }
+}
+
+fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
+    if state.store.is_none() {
+        ui.text("Open a file to get started.");
+        return;
+    }
+
+    ui.text("Modify passwords.");
+    render_entry_list(ui, state.store.as_ref().unwrap());
+
+    if ui.input_text("Entry to modify", &mut state.edit_line_input)
+        .enter_returns_true(true)
+        .build()
+    {
+        if let Ok(idx) = state.edit_line_input.trim().parse::<usize>()
+            && let Some(store) = &state.store
+            && idx < store.entries.len()
+        {
+            let entry = &store.entries[idx];
+            state.label_input = entry.label.clone();
+            state.username_input = entry.username.clone();
+            state.password_input = entry.password.clone();
+            state.notes_input = entry.notes.clone();
+            state.totp_input = entry.totp_secret.clone().unwrap_or_default();
+            state.edit_index = Some(idx);
+        }
+        state.edit_line_input.clear();
+    }
+}
+
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
-    // Auto-clear clipboard after 10s
     if let Some(clear_at) = state.clipboard_clear_at && Instant::now() >= clear_at {
         crate::clipboard::set_excluded_from_history(&mut state.clipboard, "");
         state.clipboard_clear_at = None;
     }
 
-    // Auto-clear "copied" text after 3s
     if let Some(clear_at) = state.copied_clear_at && Instant::now() >= clear_at {
         state.copied_clear_at = None;
         state.copied_field = None;
@@ -317,144 +463,17 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
             imgui::TabBar::new("my_tabs").build(ui, || {
                 imgui::TabItem::new("View passwords").build(ui, || {
-                    ui.text("Welcome to Moonaw's password manager, fully written in Rust.");
-                    ui.separator();
-
-                    if let Some(store) = &state.store {
-                        ui.input_text("Search", &mut state.password_search_input).build();
-
-                        let search_query = state.password_search_input.to_lowercase();
-                        let mut pending_copy: Option<(String, &str)> = None;
-
-                        for entry in &store.entries {
-                            if !search_query.is_empty()
-                                && !entry.label.to_lowercase().contains(&search_query)
-                                && !entry.username.to_lowercase().contains(&search_query)
-                            {
-                                continue;
-                            }
-
-                            let mut totp_code: Option<String> = None;
-
-                            if let Some(secret) = &entry.totp_secret {
-                                use totp_rs::{Algorithm, Secret, TOTP};
-                                if let Ok(bytes) = Secret::Encoded(secret.replace(" ", "").to_uppercase()).to_bytes()
-                                    && let Ok(totp) = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes)
-                                    && let Ok(code) = totp.generate_current()
-                                {
-                                    totp_code = Some(code);
-                                }
-                            }
-
-                            ui.group(|| {
-                                let totp_suffix = totp_code.as_deref().map(|c| format!(" | TOTP: {}", c)).unwrap_or_default();
-
-                                let url_part = if entry.url.is_empty() { String::new() } else { format!(" @ {}", entry.url) };
-                                let notes_part = if entry.notes.is_empty() { String::new() } else { format!(" ? {}", entry.notes) };
-                                ui.text(format!("[{}]{} | {}{}{}", entry.label, url_part, entry.username, notes_part, totp_suffix));
-                            });
-
-                            if ui.is_item_clicked() {
-                                pending_copy = Some((entry.password.clone(), "password"));
-                            } else if ui.is_item_clicked_with_button(imgui::MouseButton::Right) {
-                                pending_copy = Some((entry.username.clone(), "username"));
-                            } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
-                                && let Some(code) = totp_code
-                            {
-                                pending_copy = Some((code, "TOTP code"));
-                            }
-
-                            if ui.is_item_hovered() {
-                                ui.tooltip(|| {
-                                    ui.text("Left click to copy the password.");
-                                    ui.separator();
-                                    ui.text("Right click to copy the username.");
-                                    ui.separator();
-                                    ui.text("Middle click to copy the TOTP.");
-                                });
-                            }
-                        }
-
-                        if let Some((text, field)) = pending_copy {
-                            state.copy_to_clipboard(&text, field);
-                        }
-
-                        if let Some(field) = &state.copied_field {
-                            ui.separator();
-                            ui.text(format!("The {} has been copied to the clipboard!", field));
-                        }
-                    } else {
-                        ui.text("Open a file to get started.");
-                    }
+                    render_view_tab(ui, state);
                 });
-
                 imgui::TabItem::new("Add").build(ui, || {
-                    if state.store.is_none(){
-                        ui.text("Open a file to get started.");
-                        return;
-                    }
-
-                    ui.text("Add passwords to your current password list.");
-
-                    if ui.button("Add new password") {
-                        state.add_password_modal = true;
-                    }
+                    render_add_tab(ui, state);
                 });
-
                 imgui::TabItem::new("Delete").build(ui, || {
-                    if state.store.is_none(){
-                        ui.text("Open a file to get started.");
-                        return;
-                    }
-
-                    ui.text("Delete passwords.");
-                    render_entry_list(ui, state.store.as_ref().unwrap());
-                    if ui.input_text("Entry to delete", &mut state.delete_line_input)
-                        .enter_returns_true(true)
-                        .build()
-                    {
-                        if let Ok(idx) = state.delete_line_input.trim().parse::<usize>()
-                            && let Some(store) = &mut state.store
-                            && idx < store.entries.len()
-                        {
-                            store.entries.remove(idx);
-                            if let Some(key) = &state.encryption_key
-                                && let Err(e) = save_store(&state.selected_file, store, key) {
-                                    state.custom_error_message = Some(e);
-                                }
-                        }
-                        state.delete_line_input.clear();
-                    }
+                    render_delete_tab(ui, state);
                 });
-
                 imgui::TabItem::new("Modify").build(ui, || {
-                    if state.store.is_none(){
-                        ui.text("Open a file to get started.");
-                        return;
-                    }
-
-                    ui.text("Modify passwords.");
-                    render_entry_list(ui, state.store.as_ref().unwrap());
-                    if ui.input_text("Entry to modify", &mut state.edit_line_input)
-                        .enter_returns_true(true)
-                        .build()
-                    {
-                        if let Ok(idx) = state.edit_line_input.trim().parse::<usize>()
-                            && let Some(store) = &state.store
-                            && idx < store.entries.len()
-                        {
-                            let entry = &store.entries[idx];
-                            state.label_input = entry.label.clone();
-                            state.username_input = entry.username.clone();
-                            state.password_input = entry.password.clone();
-                            state.notes_input = entry.notes.clone();
-                            state.totp_input = entry.totp_secret.clone().unwrap_or_default();
-                            state.edit_index = Some(idx);
-                        }
-                        state.edit_line_input.clear();
-                    }
+                    render_modify_tab(ui, state);
                 });
-
                 imgui::TabItem::new("About").build(ui, || {
                     ui.text("This is a password manager written in Rust, by Moonaw.");
                     ui.separator();
@@ -463,7 +482,8 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
             });
         });
 
-    // Modal dispatch — set flag on one frame, open_popup on the next
+    // Modal dispatch — flags are set on one frame, open_popup is called on the next.
+    // imgui requires this two-frame pattern to nest popups correctly.
 
     if state.master_modal {
         ui.open_popup("Master password");
