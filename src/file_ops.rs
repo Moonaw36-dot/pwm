@@ -22,7 +22,6 @@ pub fn open_file_dialog() -> Option<(String, PathBuf)> {
 
 fn derive_key(password: &str, salt: &[u8; 16]) -> [u8; 32] {
     let mut key = [0u8; 32];
-    // Argon2::hash_password_into is generally infallible if the output buffer is large enough
     let _ = Argon2::default().hash_password_into(password.as_bytes(), salt, &mut key);
     key
 }
