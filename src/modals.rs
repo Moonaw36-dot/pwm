@@ -1,32 +1,73 @@
-use crate::app::{generate_password, verify_password, AppState, PasswordEntry, PasswordSafety};
+use crate::app::{generate_passphrase, generate_password, verify_password, AppState, GenMode, PasswordEntry, PasswordSafety, StrengthResult};
 use crate::file_ops::{create_file, load_store, save_store};
 
 pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
-    ui.dummy([420.0, 0.0]);
-    ui.text("Generate a random password.");
+    ui.dummy([440.0, 0.0]);
 
-    ui.slider("Length", 8, 64, &mut state.password_length);
-    ui.checkbox("Uppercase (A-Z)", &mut state.gen_uppercase);
-    ui.checkbox("Lowercase (a-z)", &mut state.gen_lowercase);
-    ui.checkbox("Numbers (0-9)", &mut state.gen_numbers);
-    ui.checkbox("Special (!@#...)", &mut state.gen_special);
+    let mut mode_idx = if state.gen_mode == GenMode::Passphrase { 1i32 } else { 0i32 };
+    {
+        let _col1 = ui.push_style_color(imgui::StyleColor::CheckMark, [0.75, 0.75, 0.75, 1.0]);
+        let _col2 = ui.push_style_color(imgui::StyleColor::FrameBgActive, [0.30, 0.30, 0.30, 1.0]);
+        ui.radio_button("Random password##mode", &mut mode_idx, 0);
+        ui.same_line();
+        ui.radio_button("Passphrase##mode", &mut mode_idx, 1);
+    }
+    state.gen_mode = if mode_idx == 1 { GenMode::Passphrase } else { GenMode::Password };
+
     ui.separator();
 
-    if ui.button("Generate") {
-        state.password_input = generate_password(
-            state.password_length as usize,
-            state.gen_uppercase,
-            state.gen_lowercase,
-            state.gen_numbers,
-            state.gen_special,
-        );
+    if state.gen_mode == GenMode::Password {
+        ui.slider("Length", 8, 64, &mut state.password_length);
+        ui.checkbox("Uppercase (A-Z)", &mut state.gen_uppercase);
+        ui.checkbox("Lowercase (a-z)", &mut state.gen_lowercase);
+        ui.checkbox("Numbers (0-9)", &mut state.gen_numbers);
+        ui.checkbox("Special (!@#...)", &mut state.gen_special);
+    } else {
+        ui.slider("Word count", 3, 10, &mut state.gen_word_count);
+        ui.input_text("Separator", &mut state.gen_separator).build();
+    }
+
+    ui.separator();
+
+    if !state.password_input.is_empty() {
+        ui.text_disabled(&state.password_input);
+        let pw = state.password_input.clone();
+        let strength = state.cached_strength(&pw);
+        render_strength_bar(ui, strength);
+    }
+
+    ui.separator();
+
+    if ui.button("Generate##gen") {
+        state.password_input = if state.gen_mode == GenMode::Passphrase {
+            generate_passphrase(state.gen_word_count as usize, &state.gen_separator.clone())
+        } else {
+            generate_password(
+                state.password_length as usize,
+                state.gen_uppercase,
+                state.gen_lowercase,
+                state.gen_numbers,
+                state.gen_special,
+            )
+        };
+    }
+
+    ui.same_line();
+    if ui.button("Use this##gen") {
         ui.close_current_popup();
     }
 
     ui.same_line();
     if ui.button("Cancel##gen") {
+        state.password_input.clear();
         ui.close_current_popup();
     }
+}
+
+fn render_strength_bar(ui: &imgui::Ui, (score, label, color): StrengthResult) {
+    let fraction = (score + 1) as f32 / 5.0;
+    let _col = ui.push_style_color(imgui::StyleColor::PlotHistogram, color);
+    imgui::ProgressBar::new(fraction).size([200.0, 16.0]).overlay_text(label).build(ui);
 }
 
 pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
@@ -35,6 +76,10 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Label##add", &mut state.label_input).build();
     ui.input_text("Username##add", &mut state.username_input).build();
     ui.input_text("Password##add", &mut state.password_input).build();
+
+    let pw = state.password_input.clone();
+    let strength = state.cached_strength(&pw);
+    render_strength_bar(ui, strength);
 
     if ui.button("Generate password") {
         state.gen_password_modal = true;
@@ -212,6 +257,11 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Label", &mut state.label_input).build();
     ui.input_text("Username", &mut state.username_input).build();
     ui.input_text("Password", &mut state.password_input).build();
+
+    let pw = state.password_input.clone();
+    let strength = state.cached_strength(&pw);
+    render_strength_bar(ui, strength);
+
     ui.input_text("Notes", &mut state.notes_input).build();
     ui.input_text("TOTP###MODIFY", &mut state.totp_input).build();
 

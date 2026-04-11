@@ -4,6 +4,14 @@ use serde::{Serialize, Deserialize};
 use crate::file_ops::{open_file_dialog, save_store};
 use arboard::Clipboard;
 
+static WORDLIST: &str = include_str!("../assets/wordlist.txt");
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum GenMode {
+    Password,
+    Passphrase,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordEntry {
     pub label: String,
@@ -55,11 +63,14 @@ pub struct AppState {
     pub edit_line_input: String,
 
     // Password generator
+    pub gen_mode: GenMode,
     pub password_length: i32,
     pub gen_uppercase: bool,
     pub gen_lowercase: bool,
     pub gen_numbers: bool,
     pub gen_special: bool,
+    pub gen_word_count: i32,
+    pub gen_separator: String,
 
     // Clipboard
     pub clipboard: Clipboard,
@@ -72,6 +83,7 @@ pub struct AppState {
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
     pub custom_error_message: Option<String>,
+    pub strength_cache: Option<(String, StrengthResult)>,
 }
 
 pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
@@ -115,6 +127,42 @@ pub fn generate_password(length: usize, uppercase: bool, lowercase: bool, number
         .collect()
 }
 
+pub fn generate_passphrase(word_count: usize, separator: &str) -> String {
+    use rand::seq::IndexedRandom;
+    let words: Vec<&str> = WORDLIST.lines().filter(|l| !l.is_empty()).collect();
+    let mut rng = rand::rng();
+    (0..word_count)
+        .map(|_| *words.choose(&mut rng).unwrap())
+        .collect::<Vec<_>>()
+        .join(separator)
+}
+
+pub type StrengthResult = (u8, &'static str, [f32; 4]);
+
+pub fn bits_to_strength(bits: f64) -> StrengthResult {
+    match bits as u32 {
+        0..=29  => (0, "Very Weak",   [0.85, 0.15, 0.15, 1.0]),
+        30..=49 => (1, "Weak",        [0.90, 0.50, 0.10, 1.0]),
+        50..=65 => (2, "Fair",        [0.85, 0.75, 0.10, 1.0]),
+        66..=94 => (3, "Strong",      [0.35, 0.75, 0.20, 1.0]),
+        _       => (4, "Very Strong", [0.10, 0.70, 0.20, 1.0]),
+    }
+}
+
+
+pub fn manual_strength(password: &str) -> StrengthResult {
+    if password.is_empty() {
+        return (0, "—", [0.45, 0.45, 0.45, 1.0]);
+    }
+    let mut pool = 0.0f64;
+    if password.chars().any(|c| c.is_ascii_lowercase()) { pool += 26.0; }
+    if password.chars().any(|c| c.is_ascii_uppercase()) { pool += 26.0; }
+    if password.chars().any(|c| c.is_ascii_digit())     { pool += 10.0; }
+    if password.chars().any(|c| !c.is_alphanumeric())   { pool += 32.0; }
+    if pool == 0.0 { pool = 26.0; }
+    bits_to_strength(password.len() as f64 * pool.log2())
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {
@@ -142,11 +190,14 @@ impl AppState {
             delete_line_input: String::with_capacity(256),
             edit_line_input: String::with_capacity(256),
 
+            gen_mode: GenMode::Password,
             password_length: 24,
             gen_uppercase: true,
             gen_lowercase: true,
             gen_numbers: true,
             gen_special: true,
+            gen_word_count: 5,
+            gen_separator: String::from("-"),
 
             clipboard: Clipboard::new().expect("Failed to access system clipboard"),
             clipboard_clear_at: None,
@@ -156,6 +207,7 @@ impl AppState {
             copied_field: None,
             copied_clear_at: None,
             custom_error_message: None,
+            strength_cache: None,
         }
     }
 
@@ -172,6 +224,16 @@ impl AppState {
         self.selected_file = None;
         self.selected_file_name.clear();
         self.encryption_key = None;
+    }
+
+    pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
+        if let Some((ref cached_pw, result)) = self.strength_cache
+            && cached_pw == password {
+                return result;
+        }
+        let result = manual_strength(password);
+        self.strength_cache = Some((password.to_string(), result));
+        result
     }
 
     pub fn copy_to_clipboard(&mut self, text: &str, field_name: &str) {
@@ -196,7 +258,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         state.clipboard_clear_at = None;
     }
 
-    // Auto-clear "copied" toast after 3s
+    // Auto-clear "copied" text after 3s
     if let Some(clear_at) = state.copied_clear_at && Instant::now() >= clear_at {
         state.copied_clear_at = None;
         state.copied_field = None;
@@ -434,5 +496,3 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::custom_error_modal(ui, state);
     }
 }
-
-
