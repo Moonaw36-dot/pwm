@@ -296,7 +296,9 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
         return;
     }
 
-
+    if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::F){
+        ui.set_keyboard_focus_here();
+    }
 
     ui.input_text("Search", &mut state.password_search_input).build();
 
@@ -524,7 +526,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     ui.window("Password Manager")
-        .size([500.0, 200.0], imgui::Condition::FirstUseEver)
+        .size([550.0, 200.0], imgui::Condition::FirstUseEver)
         .menu_bar(true)
         .build(|| {
             ui.menu_bar(|| {

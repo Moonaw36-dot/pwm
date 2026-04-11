@@ -10,4 +10,4 @@
 ## Polish
 - [X] Confirm dialog before deleting an entry
 - [X] Show entry count in View tab
-- [ ] Keyboard shortcut for search focus (Ctrl+F)
+- [X] Keyboard shortcut for search focus (Ctrl+F)
