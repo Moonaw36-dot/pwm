@@ -46,6 +46,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         ui.checkbox("Lowercase (a-z)", &mut state.gen_lowercase);
         ui.checkbox("Numbers (0-9)", &mut state.gen_numbers);
         ui.checkbox("Special (!@#...)", &mut state.gen_special);
+        ui.checkbox("Ambiguous characters (O0...)", &mut state.ambiguous_characters);
     } else {
         ui.slider("Word count", 3, 64, &mut state.gen_word_count);
         ui.input_text("Separator", &mut state.gen_separator).build();
@@ -68,6 +69,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         } else {
             generate_password(
                 state.password_length as usize,
+                state.ambiguous_characters,
                 state.gen_uppercase,
                 state.gen_lowercase,
                 state.gen_numbers,
@@ -240,7 +242,7 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("What do you want to do?");
 
     if ui.button("Generate a strong password") {
-        state.password_input = generate_password(24, true, true, true, true);
+        state.password_input = generate_password(24, true, true, true, true, false);
         ui.close_current_popup();
     }
 

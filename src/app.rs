@@ -82,6 +82,7 @@ pub struct AppState {
     pub gen_special: bool,
     pub gen_word_count: i32,
     pub gen_separator: String,
+    pub ambiguous_characters: bool,
 
     // Clipboard
     pub clipboard: Clipboard,
@@ -149,7 +150,7 @@ pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
     issues
 }
 
-pub fn generate_password(length: usize, uppercase: bool, lowercase: bool, numbers: bool, special: bool) -> String {
+pub fn generate_password(length: usize, uppercase: bool, lowercase: bool, numbers: bool, special: bool, ambiguous: bool) -> String {
     use rand::seq::IndexedRandom;
 
     let mut charset: Vec<u8> = Vec::new();
@@ -157,6 +158,7 @@ pub fn generate_password(length: usize, uppercase: bool, lowercase: bool, number
     if lowercase { charset.extend_from_slice(b"abcdefghijklmnopqrstuvwxyz"); }
     if numbers   { charset.extend_from_slice(b"0123456789"); }
     if special   { charset.extend_from_slice(b"!@#$%^&*-_=?"); }
+    if !ambiguous { charset.retain(|c| !b"0OIl1B8S5Z2".contains(c)); }
 
     if charset.is_empty() {
         return String::new();
@@ -257,6 +259,8 @@ impl AppState {
             gen_special: true,
             gen_word_count: 5,
             gen_separator: String::from("-"),
+            ambiguous_characters: true,
+
 
             clipboard: Clipboard::new().expect("Failed to access system clipboard"),
             clipboard_clear_at: None,
