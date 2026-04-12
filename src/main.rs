@@ -6,6 +6,9 @@ mod input;
 mod modals;
 mod strength;
 mod theme;
+mod models;
+mod ui;
+mod ui_tabs;
 
 use glutin::{
     config::ConfigTemplateBuilder,
@@ -27,7 +30,8 @@ use winit::{
 };
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
-use app::{AppState, build_ui};
+use app::AppState;
+use ui::build_ui;
 
 struct ArboardClipboard(arboard::Clipboard);
 
