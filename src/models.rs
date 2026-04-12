@@ -6,7 +6,8 @@ use crate::strength::GenMode;
 use arboard::Clipboard;
 use crate::strength::StrengthResult;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct PasswordEntry {
     pub label: String,
     pub username: String,
@@ -14,12 +15,11 @@ pub struct PasswordEntry {
     pub notes: String,
     pub totp_secret: Option<String>,
     pub tags: Option<Vec<String>>,
-    #[serde(default)]
     pub url: String,
-    #[serde(default)]
     pub custom_fields: Vec<(String, String)>,
-    #[serde(default)]
     pub is_secure_note: bool,
+    #[serde(skip)]
+    pub created_at: Option<Instant>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

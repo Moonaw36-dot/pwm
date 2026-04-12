@@ -8,6 +8,6 @@
 - [X] **Key file support** — two-factor vault unlock using a key file + master password (like KeePass)
 
 ## Medium Priority
-- [ ] **Password expiry warnings** — optional expiry date per entry, Health tab flags expired/expiring passwords
+- [X] **Password expiry warnings** — optional expiry date per entry, Health tab flags expired/expiring passwords
 - [ ] **Recent files list** — persist last N opened vault paths in config, show in the Files menu
-- [ ] **Secure notes** — entries with only a title and body, no username/password fields
+- [X] **Secure notes** — entries with only a title and body, no username/password fields

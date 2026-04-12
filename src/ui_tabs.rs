@@ -1,3 +1,4 @@
+use std::time::Instant;
 use crate::models::{AppState};
 use crate::theme;
 use crate::strength::{haveibeenpwned, manual_strength};
@@ -262,6 +263,18 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 if ui.button("Modify password") {
                     state.modals.gen_password = true;
                 }
+            }
+        }
+        ui.separator();
+
+        ui.text("Old passwords:");
+        let thirty_days = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        for entry in &store.entries {
+            if let Some(created_at) = entry.created_at
+                && let Some(duration) = Instant::now().checked_duration_since(created_at)
+                && duration > thirty_days
+            {
+                ui.text(format!("{} - {}", entry.label, entry.username));
             }
         }
     }

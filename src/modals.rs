@@ -1,3 +1,4 @@
+use std::time::Instant;
 use zeroize::Zeroize;
 use crate::app::{AppState, PasswordEntry};
 use crate::strength::{GenMode, PasswordSafety, StrengthResult, generate_passphrase, generate_password, verify_password};
@@ -343,6 +344,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
             .filter(|(k, _)| !k.trim().is_empty())
             .collect(),
         is_secure_note: state.form.is_secure_note,
+        created_at: Some(Instant::now()),
     };
 
     if let Some(store) = &mut state.vault.store {
@@ -479,6 +481,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
                 .filter(|(k, _)| !k.trim().is_empty())
                 .collect(),
             is_secure_note: state.form.is_secure_note,
+            created_at: store.entries[idx].created_at,
             };        state.save();
         state.edit_index = None;
         ui.close_current_popup();
