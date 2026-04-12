@@ -8,6 +8,7 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Are you sure you want to delete the password?");
     if ui.button("Yes"){
         if let (Some(idx), Some(store)) = (state.delete_idx, &mut state.store) {
+            state.hibp_cache.remove(&store.entries[idx].password);
             store.entries.remove(idx);
             if let Some(key) = &state.encryption_key {
                 let _ = save_store(&state.selected_file, store, key);
@@ -90,7 +91,8 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         }
     } else {
         if ui.button("Copy to clipboard###gen") {
-            crate::clipboard::set_excluded_from_history(&mut state.clipboard, &state.password_input)
+            crate::clipboard::set_excluded_from_history(&mut state.clipboard, &state.password_input);
+            ui.close_current_popup();
         }
 
         if ui.button("Close") {
@@ -367,6 +369,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
         && let Some(idx) = state.edit_index
         && let Some(store) = &mut state.store
     {
+        state.hibp_cache.remove(&store.entries[idx].password);
         store.entries[idx] = PasswordEntry {
             label: state.label_input.clone(),
             username: state.username_input.clone(),

@@ -4,7 +4,6 @@ use serde::{Serialize, Deserialize};
 use zeroize::Zeroizing;
 use crate::file_ops::open_file_dialog;
 use arboard::Clipboard;
-use totp_rs::Algorithm::SHA1;
 
 static WORDLIST: &str = include_str!("../assets/wordlist.txt");
 
@@ -110,7 +109,7 @@ pub fn haveibeenpwned(password: &str) -> bool{
         Err(_) => return false,
     };
     body.lines().any(|line: &str| {
-        line.split(':').next().map_or(false, |s: &str| s.eq_ignore_ascii_case(suffix))
+        line.split(':').next().is_some_and(|s: &str| s.eq_ignore_ascii_case(suffix))
     })
 }
 
@@ -533,12 +532,18 @@ fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         ui.separator();
 
         ui.text("Pwned passwords:");
-        let passwords: Vec<String> = store.entries.iter().map(|e| e.password.clone()).collect();
-        let labels: Vec<String> = store.entries.iter().map(|e| e.label.clone()).collect();
-        for (password, label) in passwords.iter().zip(labels.iter()) {
-            let pwned = *state.hibp_cache.entry(password.clone()).or_insert_with(|| haveibeenpwned(password));
-            if pwned {
-                ui.text(format!("The password \"{}\" has been pwned!", password));
+        for i in 0..store.entries.len() {
+            let password = store.entries[i].password.clone();
+            if !state.hibp_cache.contains_key(&password) {
+                let result = haveibeenpwned(&password);
+                state.hibp_cache.insert(password.clone(), result);
+            }
+            if state.hibp_cache[&password] {
+                ui.text(format!("The password \"{}\" has been pwned! Click the button to modify the password.", password));
+                ui.same_line();
+                if ui.button("Modify password") {
+                    state.gen_password_modal = true;
+                }
             }
         }
     }
