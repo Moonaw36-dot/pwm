@@ -177,6 +177,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
             state.modals.warning_password = true;
         } else {
             add_entry_from_inputs(state);
+            state.clear_inputs();
             ui.close_current_popup();
         }
     }
@@ -184,6 +185,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Cancel##add") {
         state.form.custom_fields.clear();
+        state.clear_inputs();
         ui.close_current_popup();
     }
 }
@@ -472,12 +474,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Cancel") {
         state.edit_index = None;
-        state.form.custom_fields.clear();
-        state.form.label.clear();
-        state.form.username.clear();
-        state.form.password.clear();
-        state.form.notes.clear();
-        state.form.totp.clear();
+        state.clear_inputs();
         ui.close_current_popup();
     }
 }

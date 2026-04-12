@@ -186,6 +186,17 @@ impl AppState {
         self.vault.encryption_key = None;
     }
 
+    pub fn clear_inputs(&mut self) {
+        self.form.password.clear();
+        self.form.custom_fields.clear();
+        self.form.url.clear();
+        self.form.label.clear();
+        self.form.username.clear();
+        self.form.notes.clear();
+        self.form.tag.clear();
+        self.form.totp.clear();
+    }
+
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
         if let Some((ref cached_pw, result)) = self.strength_cache
             && cached_pw == password
