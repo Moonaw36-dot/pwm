@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 use zeroize::Zeroizing;
 use crate::file_ops::open_file_dialog;
 use arboard::Clipboard;
+use totp_rs::Algorithm::SHA1;
 
 static WORDLIST: &str = include_str!("../assets/wordlist.txt");
 
@@ -96,6 +97,21 @@ pub struct AppState {
     pub copied_clear_at: Option<Instant>,
     pub custom_error_message: Option<String>,
     pub strength_cache: Option<(String, StrengthResult)>,
+    pub hibp_cache: std::collections::HashMap<String, bool>,
+}
+use sha1::{Digest, Sha1};
+pub fn haveibeenpwned(password: &str) -> bool{
+    let hash: String = Sha1::digest(password.as_bytes()).iter().map(|b| format!("{:02X}", b)).collect();
+    let (prefix, suffix) = hash.split_at(5);
+
+    let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
+    let body = match ureq::get(&url).call() {
+        Ok(mut response) => response.body_mut().read_to_string().unwrap_or_default(),
+        Err(_) => return false,
+    };
+    body.lines().any(|line: &str| {
+        line.split(':').next().map_or(false, |s: &str| s.eq_ignore_ascii_case(suffix))
+    })
 }
 
 pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
@@ -253,6 +269,7 @@ impl AppState {
             copied_clear_at: None,
             custom_error_message: None,
             strength_cache: None,
+            hibp_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -510,6 +527,18 @@ fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         for labels in seen.values() {
             if labels.len() > 1 {
                 ui.text(format!("Reused by: {}", labels.join(", ")));
+            }
+        }
+
+        ui.separator();
+
+        ui.text("Pwned passwords:");
+        let passwords: Vec<String> = store.entries.iter().map(|e| e.password.clone()).collect();
+        let labels: Vec<String> = store.entries.iter().map(|e| e.label.clone()).collect();
+        for (password, label) in passwords.iter().zip(labels.iter()) {
+            let pwned = *state.hibp_cache.entry(password.clone()).or_insert_with(|| haveibeenpwned(password));
+            if pwned {
+                ui.text(format!("The password \"{}\" has been pwned!", password));
             }
         }
     }

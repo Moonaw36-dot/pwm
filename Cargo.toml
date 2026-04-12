@@ -5,6 +5,8 @@ edition = "2024"
 license = "LicenseRef-MIT-Attribution"
 
 [dependencies]
+ureq = "3"
+sha1 = "0.11.0"
 totp-rs = "5.7.1"
 aes-gcm = "0.10.3"
 argon2 = "0.6.0-rc.3"
