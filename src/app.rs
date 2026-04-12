@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use zeroize::Zeroizing;
-use crate::file_ops::open_file_dialog;
+use crate::file_ops::{open_file_dialog, save_store};
 use crate::strength::{GenMode, StrengthResult, haveibeenpwned, manual_strength};
 use crate::theme;
 use arboard::Clipboard;
@@ -34,6 +34,8 @@ pub struct Vault {
     pub encryption_key: Option<Zeroizing<[u8; 32]>>,
     pub last_activity: Instant,
     pub lock_timeout_secs: u64,
+    pub keyfile: Option<PathBuf>,
+    pub keyfile_hash: Option<[u8; 32]>,
 }
 
 
@@ -96,6 +98,7 @@ pub struct AppState {
     pub edit_index: Option<usize>,
     pub delete_idx: Option<usize>,
     pub custom_error_message: Option<String>,
+    pub custom_success_message: Option<String>,
     pub strength_cache: Option<(String, StrengthResult)>,
     pub hibp_cache: std::collections::HashMap<String, bool>,
 }
@@ -110,6 +113,8 @@ impl AppState {
                 encryption_key: None,
                 last_activity: Instant::now(),
                 lock_timeout_secs: crate::config::load().lock_timeout_secs,
+                keyfile: None,
+                keyfile_hash: None,
             },
             form: EntryForm {
                 label: String::with_capacity(256),
@@ -158,6 +163,7 @@ impl AppState {
             edit_index: None,
             delete_idx: None,
             custom_error_message: None,
+            custom_success_message: None,
             strength_cache: None,
             hibp_cache: std::collections::HashMap::new(),
         }
@@ -166,6 +172,8 @@ impl AppState {
     pub fn open_file(&mut self) {
         if let Some((name, path)) = open_file_dialog() {
             self.vault.file_name = name;
+            let config = crate::config::load();
+            self.vault.keyfile_hash = config.keyfile_hashes.get(path.as_path()).copied();
             self.vault.file_path = Some(path);
             self.modals.master = true;
         }
@@ -194,6 +202,14 @@ impl AppState {
         self.clipboard.clear_at = Some(Instant::now() + Duration::from_secs(10));
         self.clipboard.copied_field = Some(field_name.to_string());
         self.clipboard.copied_clear_at = Some(Instant::now() + Duration::from_secs(3));
+    }
+
+    pub fn save(&mut self) {
+        if let Some(key) = &self.vault.encryption_key
+            && let Some(store) = &self.vault.store
+            && let Err(e) = save_store(&self.vault.file_path, store, key) {
+            self.custom_error_message = Some(e);
+        }
     }
 }
 
@@ -476,6 +492,14 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     if ui.menu_item("Close") {
                         state.close_file();
                     }
+                    if ui.menu_item("Add a key-file") && state.vault.keyfile.is_none(){
+                        match crate::file_ops::create_key_file(state){
+                            Ok(_) => { }
+                            Err(error) => {
+                                state.custom_error_message = Some(error);
+                            }
+                        }
+                    }
                     if ui.menu_item("Import from CSV") {
                         match crate::file_ops::import_csv() {
                             Ok(Some(imported)) => {
@@ -570,9 +594,19 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         ui.open_popup("Master password");
         state.modals.master = false;
     }
+
     if let Some(_token) = ui.begin_modal_popup("Master password") {
         crate::modals::enter_master_password(ui, state);
+
+        if state.custom_success_message.is_some() {
+            ui.open_popup("Success");
+        }
+
+        if let Some(_token) = ui.begin_modal_popup("Success") {
+            crate::modals::success_modal(ui, state);
+        }
     }
+
 
     if state.modals.filename {
         ui.open_popup("Create new file");
@@ -586,6 +620,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         ui.open_popup("Add a password");
         state.modals.add_password = false;
     }
+
     if let Some(_token) = ui.begin_modal_popup("Add a password") {
         crate::modals::password_modal(ui, state);
 
@@ -621,6 +656,8 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(_token) = ui.begin_modal_popup("Modify entry") {
         crate::modals::modify_entry_modal(ui, state);
     }
+
+
 
     if state.custom_error_message.is_some() {
         ui.open_popup("Error modal");

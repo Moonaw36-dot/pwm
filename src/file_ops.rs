@@ -3,6 +3,7 @@ use rand::Rng;
 use argon2::Argon2;
 use aes_gcm::{Aes256Gcm, KeyInit, AeadCore};
 use aes_gcm::aead::{Aead, OsRng};
+use sha2::{Sha256, Digest};
 use zeroize::Zeroizing;
 use crate::app::{AppState, PasswordEntry, PasswordList};
 
@@ -146,6 +147,58 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     state.vault.encryption_key = Some(key);
     state.vault.file_path = Some(path);
     state.vault.file_name = file_name.to_string();
+    Ok(())
+}
+
+pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
+    let path = rfd::FileDialog::new()
+        .add_filter("Aegis keyfile", &["aegis"])
+        .pick_file()
+        .ok_or("No file selected".to_string())?;
+
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let hash: [u8; 32] = Sha256::digest(&bytes).into();
+
+
+
+    if Some(hash) != state.vault.keyfile_hash {
+        return Err("Invalid hash.".to_string());
+    }
+
+    state.vault.keyfile = Some(path);
+    Ok(())
+}
+
+pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
+    let path = rfd::FileDialog::new()
+        .set_file_name("keyfile.aegis")
+        .add_filter("Aegis keyfile", &["aegis"])
+        .save_file()
+        .ok_or("No folder selected".to_string())?;
+
+    let path = if path.extension().and_then(|e| e.to_str()) != Some("aegis") {
+        path.with_extension("aegis")
+    } else {
+        path
+    };
+
+
+    let mut key = Zeroizing::new([0u8; 32]);
+    rand::rng().fill_bytes(key.as_mut());
+
+    let hash: [u8; 32] = Sha256::digest(*key).into();
+
+    std::fs::write(&path, *key).map_err(|e| e.to_string())?;
+
+    state.vault.keyfile_hash = Some(hash);
+    state.vault.keyfile = Some(path);
+
+    if let Some(vault_path) = &state.vault.file_path {
+        let mut config = crate::config::load();
+        config.keyfile_hashes.insert(vault_path.clone(), hash);
+        let _ = crate::config::save(&config);
+    }
+
     Ok(())
 }
 

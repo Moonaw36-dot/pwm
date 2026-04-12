@@ -9,6 +9,8 @@ pub const MODAL_WIDTH_SETTINGS: f32 = 300.0;
 pub const CUSTOM_FIELD_NAME_WIDTH: f32 = 150.0;
 pub const CUSTOM_FIELD_VALUE_WIDTH: f32 = 180.0;
 
+pub const SUCCESS_COLOR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+
 pub const LINK_COLOR: [f32; 4] = [0.27, 0.67, 1.0, 1.0];
 pub const ERROR_COLOR: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 

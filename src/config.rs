@@ -1,14 +1,20 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub lock_timeout_secs: u64,
+    #[serde(default)]
+    pub keyfile_hashes: HashMap<PathBuf, [u8; 32]>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { lock_timeout_secs: 300 }
+        Self {
+            lock_timeout_secs: 300,
+            keyfile_hashes: Default::default(),
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 use zeroize::Zeroize;
 use crate::app::{AppState, PasswordEntry};
 use crate::strength::{GenMode, PasswordSafety, StrengthResult, generate_passphrase, generate_password, verify_password};
-use crate::file_ops::{create_file, load_store, save_store};
+use crate::file_ops::{create_file, load_store};
 use crate::theme;
 
 pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
@@ -12,11 +12,8 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
         if let (Some(idx), Some(store)) = (state.delete_idx, &mut state.vault.store) {
             state.hibp_cache.remove(&store.entries[idx].password);
             store.entries.remove(idx);
-            if let Some(key) = &state.vault.encryption_key
-                && let Err(e) = save_store(&state.vault.file_path, store, key) {
-                    state.custom_error_message = Some(e);
-                }
         }
+        state.save();
         state.delete_idx = None;
         ui.close_current_popup();
     }
@@ -153,6 +150,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     if ui.button("Add field") {
         state.form.custom_fields.push((String::new(), String::new()));
+
     }
 
 
@@ -190,6 +188,16 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
+pub fn success_modal(ui: &imgui::Ui, state: &mut AppState) {
+    ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
+    ui.text_colored(theme::SUCCESS_COLOR, state.custom_success_message.as_ref().unwrap_or(&String::new()));
+
+    if ui.button("Close") {
+        state.custom_success_message = None;
+        ui.close_current_popup();
+    }
+}
+
 pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
 
@@ -207,6 +215,19 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
 
     let button_label = if state.modals.master_is_create { "Create" } else { "Unlock" };
 
+    if state.vault.keyfile_hash.is_some() {
+        ui.text("Your vault has a keyfile. Please press the button to select it.");
+        if ui.button("Select keyfile") {
+            match crate::file_ops::load_keyfile(state){
+                Ok(_) => { state.custom_success_message = Some("Successfully selected keyfile!".to_string()); },
+                Err(error) => {
+                    state.custom_error_message = Some(error);
+                    return;
+                }
+            }
+        }
+    }
+
     if ui.button(button_label) {
         if state.modals.master_is_create {
             let filename = state.filename_input.clone();
@@ -221,6 +242,8 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
                     state.custom_error_message = Some(e);
                 }
             }
+        } else if state.vault.keyfile_hash.is_some() && state.vault.keyfile.is_none() {
+            state.custom_error_message = Some("Please select your keyfile before unlocking.".to_string());
         } else if let Some(path) = &state.vault.file_path
             && let Some((store, key)) = load_store(path, &state.master_input)
         {
@@ -309,11 +332,8 @@ fn add_entry_from_inputs(state: &mut AppState) {
 
     if let Some(store) = &mut state.vault.store {
         store.entries.push(entry);
-        if let Some(key) = &state.vault.encryption_key
-            && let Err(e) = save_store(&state.vault.file_path, store, key) {
-                state.custom_error_message = Some(e);
-            }
     }
+    state.save();
 }
 
 pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
@@ -353,9 +373,15 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     if ui.button("Save") {
         state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
-        if let Err(e) = crate::config::save(&crate::config::Config { lock_timeout_secs: state.vault.lock_timeout_secs }) {
+
+        let mut config = crate::config::load();
+        config.lock_timeout_secs = state.vault.lock_timeout_secs;
+
+        if let Err(e) = crate::config::save(&config) {
             state.custom_error_message = Some(e);
         }
+
+
         ui.close_current_popup();
     }
 
@@ -438,10 +464,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
                 .filter(|(k, _)| !k.trim().is_empty())
                 .collect(),
         };
-        if let Some(key) = &state.vault.encryption_key
-            && let Err(e) = save_store(&state.vault.file_path, store, key) {
-                state.custom_error_message = Some(e);
-            }
+        state.save();
         state.edit_index = None;
         ui.close_current_popup();
     }
