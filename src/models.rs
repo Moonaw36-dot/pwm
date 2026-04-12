@@ -18,6 +18,8 @@ pub struct PasswordEntry {
     pub url: String,
     #[serde(default)]
     pub custom_fields: Vec<(String, String)>,
+    #[serde(default)]
+    pub is_secure_note: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,6 +47,7 @@ pub struct EntryForm {
     pub url: String,
     pub tag: String,
     pub custom_fields: Vec<(String, String)>,
+    pub is_secure_note: bool,
 }
 
 pub struct Generator {

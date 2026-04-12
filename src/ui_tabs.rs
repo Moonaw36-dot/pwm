@@ -32,6 +32,28 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                 continue;
             }
 
+
+            if entry.is_secure_note {
+                ui.text(format!("{}[{}] | {}", entry.tags.as_deref()
+                    .map(|t| format!("[{}] ", t.join(", ")))
+                    .unwrap_or_default(), entry.label, entry.notes));
+
+                if ui.is_item_clicked() {
+                    pending_copy = Some((entry.notes.clone(), "note"));
+                }
+
+                if ui.is_item_hovered() {
+                    ui.tooltip(|| {
+                        ui.text("This is a secure note.");
+                        ui.separator();
+                        ui.text("Left click to copy the note.");
+                    })
+                }
+
+                continue;
+            }
+
+
             let mut totp_code: Option<String> = None;
             let mut totp_timeout: Option<String> = None;
             if let Some(secret) = &entry.totp_secret {

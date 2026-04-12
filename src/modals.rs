@@ -128,22 +128,31 @@ fn render_strength_bar(ui: &imgui::Ui, (score, label, color): StrengthResult) {
 pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
 
+    ui.checkbox("Secure notes", &mut state.form.is_secure_note);
+
     ui.input_text("Label##add", &mut state.form.label).build();
     ui.input_text("Tag##add", &mut state.form.tag).build();
     ui.input_text("URL / Website##add", &mut state.form.url).build();
-    ui.input_text("Username##add", &mut state.form.username).build();
-    ui.input_text("Password##add", &mut state.form.password).password(true).build();
+
+    if !state.form.is_secure_note{
+        state.form.username.clear();
+        state.form.password.clear();
 
 
-    let pw = state.form.password.clone();
-    let strength = state.cached_strength(&pw);
-    render_strength_bar(ui, strength);
+        ui.input_text("Username##add", &mut state.form.username).build();
+        ui.input_text("Password##add", &mut state.form.password).password(true).build();
 
-    if ui.button("Generate password") {
-        state.modals.gen_password = true;
+        let pw = state.form.password.clone();
+        let strength = state.cached_strength(&pw);
+        render_strength_bar(ui, strength);
+
+        if ui.button("Generate password") {
+            state.modals.gen_password = true;
+        }
+
+        ui.input_text("TOTP##add", &mut state.form.totp).build();
     }
 
-    ui.input_text("TOTP##add", &mut state.form.totp).build();
     ui.input_text("Notes##add", &mut state.form.notes).build();
     ui.separator();
 
@@ -171,9 +180,11 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if ui.button("Add") {
-        if state.form.username.is_empty() || state.form.password.is_empty() || state.form.label.is_empty() {
+        let is_valid = !state.form.label.is_empty() &&
+                            (state.form.is_secure_note && !state.form.notes.is_empty() ||  (!state.form.username.is_empty() && !state.form.password.is_empty()));
+        if !is_valid {
             state.modals.error_password = true;
-        } else if !verify_password(&state.form.password).is_empty() {
+        } else if !state.form.is_secure_note && !verify_password(&state.form.password).is_empty() {
             state.modals.warning_password = true;
         } else {
             add_entry_from_inputs(state);
@@ -299,6 +310,7 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.same_line();
     if ui.button("Ignore") {
+        state.clear_inputs();
         add_entry_from_inputs(state);
         ui.close_current_popup();
     }
@@ -330,6 +342,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
             .into_iter()
             .filter(|(k, _)| !k.trim().is_empty())
             .collect(),
+        is_secure_note: state.form.is_secure_note,
     };
 
     if let Some(store) = &mut state.vault.store {
@@ -465,8 +478,8 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
                 .into_iter()
                 .filter(|(k, _)| !k.trim().is_empty())
                 .collect(),
-        };
-        state.save();
+            is_secure_note: state.form.is_secure_note,
+            };        state.save();
         state.edit_index = None;
         ui.close_current_popup();
     }

@@ -25,6 +25,7 @@ impl AppState {
                 totp: String::with_capacity(256),
                 url: String::with_capacity(256),
                 tag: String::with_capacity(256),
+                is_secure_note: false,
                 custom_fields: Vec::new(),
             },
             generator: crate::models::Generator {
@@ -96,6 +97,7 @@ impl AppState {
         self.form.notes.clear();
         self.form.tag.clear();
         self.form.totp.clear();
+        self.form.is_secure_note = false;
     }
 
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
