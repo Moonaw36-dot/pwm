@@ -55,6 +55,7 @@ pub struct AppState {
     pub error_password_modal: bool,
     pub warning_password_modal: bool,
     pub gen_password_modal: bool,
+    pub gen_from_add_modal: bool,
     pub filename_modal: bool,
     pub master_modal: bool,
     pub master_mode_is_create: bool,
@@ -216,6 +217,7 @@ impl AppState {
             error_password_modal: false,
             warning_password_modal: false,
             gen_password_modal: false,
+            gen_from_add_modal: false,
             filename_modal: false,
             master_modal: false,
             master_mode_is_create: false,
@@ -560,6 +562,17 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                         state.settings_modal = true;
                     }
                 });
+                if state.store.is_some(){
+                    ui.menu("Passwords", || {
+                        if ui.menu_item("Generate password") {
+                            state.gen_password_modal = true;
+                        }
+                        if ui.menu_item("Add a password") {
+                            state.add_password_modal = true;
+                        }
+                    });
+                }
+
             });
 
             imgui::TabBar::new("my_tabs").build(ui, || {
@@ -601,6 +614,15 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
     // Modal dispatch — flags are set on one frame, open_popup is called on the next.
     // imgui requires this two-frame pattern to nest popups correctly.
+
+    if state.gen_password_modal && !state.add_password_modal{
+        ui.open_popup("Generate a password");
+        state.gen_password_modal = false;
+    }
+
+    if let Some(_token) = ui.begin_modal_popup("Generate a password"){
+        crate::modals::generate_password_modal(ui, state);
+    }
 
     if state.confirm_delete_modal{
         ui.open_popup("Confirm Delete");
@@ -653,6 +675,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         if state.gen_password_modal {
             ui.open_popup("Generate password");
             state.gen_password_modal = false;
+            state.gen_from_add_modal = true;
         }
         if let Some(_token) = ui.begin_modal_popup("Generate password") {
             crate::modals::generate_password_modal(ui, state);

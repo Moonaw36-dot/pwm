@@ -75,16 +75,31 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         };
     }
 
-    ui.same_line();
-    if ui.button("Use this##gen") {
-        ui.close_current_popup();
+    if state.gen_from_add_modal {
+        ui.same_line();
+        if ui.button("Use this##gen") {
+            state.gen_from_add_modal = false;
+            ui.close_current_popup();
+        }
+
+        ui.same_line();
+        if ui.button("Cancel##gen") {
+            state.password_input.clear();
+            state.gen_from_add_modal = false;
+            ui.close_current_popup();
+        }
+    } else {
+        if ui.button("Copy to clipboard###gen") {
+            crate::clipboard::set_excluded_from_history(&mut state.clipboard, &state.password_input)
+        }
+
+        if ui.button("Close") {
+            ui.close_current_popup();
+        }
+
     }
 
-    ui.same_line();
-    if ui.button("Cancel##gen") {
-        state.password_input.clear();
-        ui.close_current_popup();
-    }
+
 }
 
 fn render_strength_bar(ui: &imgui::Ui, (score, label, color): StrengthResult) {
