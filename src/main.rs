@@ -4,6 +4,8 @@ mod config;
 mod file_ops;
 mod input;
 mod modals;
+mod strength;
+mod theme;
 
 use glutin::{
     config::ConfigTemplateBuilder,
@@ -38,47 +40,11 @@ impl imgui::ClipboardBackend for ArboardClipboard {
     }
 }
 
-fn apply_theme(style: &mut imgui::Style) {
-    style.window_rounding = 6.0;
-    style.popup_rounding = 6.0;
-    style.tab_rounding = 4.0;
-    style.child_rounding = 4.0;
-    style.frame_rounding = 4.0;
-    style.anti_aliased_lines = true;
-    style.anti_aliased_fill = true;
-    style.frame_padding = [6.0, 3.0];
-    style.window_padding = [6.0, 3.0];
-
-    let c = &mut style.colors;
-    c[imgui::StyleColor::WindowBg as usize]         = [0.10, 0.10, 0.10, 1.0];
-    c[imgui::StyleColor::ModalWindowDimBg as usize]  = [0.20, 0.20, 0.20, 0.3];
-    c[imgui::StyleColor::TitleBgActive as usize]     = [0.10, 0.10, 0.10, 1.0];
-    c[imgui::StyleColor::FrameBg as usize]           = [0.15, 0.15, 0.15, 1.0];
-    c[imgui::StyleColor::FrameBgHovered as usize]    = [0.20, 0.20, 0.20, 1.0];
-    c[imgui::StyleColor::FrameBgActive as usize]     = [0.25, 0.25, 0.25, 1.0];
-    c[imgui::StyleColor::Button as usize]            = [0.13, 0.13, 0.13, 1.0];
-    c[imgui::StyleColor::ButtonHovered as usize]     = [0.30, 0.30, 0.30, 1.0];
-    c[imgui::StyleColor::ButtonActive as usize]      = [0.60, 0.60, 0.60, 1.0];
-    c[imgui::StyleColor::SliderGrab as usize]        = [0.40, 0.40, 0.40, 1.0];
-    c[imgui::StyleColor::SliderGrabActive as usize]  = [0.60, 0.60, 0.60, 1.0];
-    c[imgui::StyleColor::Tab as usize]               = [0.14, 0.14, 0.14, 1.0];
-    c[imgui::StyleColor::TabActive as usize]         = [0.25, 0.25, 0.25, 1.0];
-    c[imgui::StyleColor::TabHovered as usize]        = [0.20, 0.20, 0.20, 1.0];
-    c[imgui::StyleColor::Border as usize]            = [0.08, 0.08, 0.08, 1.0];
-    c[imgui::StyleColor::Separator as usize]         = [0.18, 0.18, 0.18, 1.0];
-    c[imgui::StyleColor::MenuBarBg as usize]         = [0.12, 0.12, 0.12, 0.8];
-    c[imgui::StyleColor::HeaderHovered as usize]     = [0.18, 0.18, 0.18, 1.0];
-    c[imgui::StyleColor::ResizeGrip as usize]        = [0.12, 0.12, 0.12, 1.0];
-    c[imgui::StyleColor::ResizeGripActive as usize]  = [0.14, 0.14, 0.14, 1.0];
-    c[imgui::StyleColor::ResizeGripHovered as usize] = [0.15, 0.15, 0.15, 1.0];
-
-}
-
 fn main() {
     let event_loop = EventLoop::new().unwrap();
     let window_builder = WindowBuilder::new()
         .with_title("Aegis")
-        .with_inner_size(winit::dpi::LogicalSize::new(1024.0, 768.0));
+        .with_inner_size(winit::dpi::LogicalSize::new(theme::WINDOW_WIDTH, theme::WINDOW_HEIGHT));
 
     let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
     let (window, gl_config) = display_builder
@@ -124,7 +90,7 @@ fn main() {
     platform.attach_window(imgui_ctx.io_mut(), &window, HiDpiMode::Default);
 
     let hidpi = platform.hidpi_factor();
-    let font_size = (15.0 * hidpi) as f32;
+    let font_size = (theme::FONT_SIZE_PT as f64 * hidpi) as f32;
     imgui_ctx.fonts().add_font(&[imgui::FontSource::TtfData {
         data: include_bytes!("../assets/Inter_24pt-Regular.ttf"),
         size_pixels: font_size,
@@ -140,7 +106,7 @@ fn main() {
     let mut renderer =
         imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_ctx).unwrap();
 
-    apply_theme(imgui_ctx.style_mut());
+    theme::apply(imgui_ctx.style_mut());
 
     let mut last_frame = std::time::Instant::now();
     let mut state = AppState::new();
@@ -184,7 +150,7 @@ fn main() {
                 | WindowEvent::MouseWheel { .. },
             ..
         }) {
-            state.last_activity = std::time::Instant::now();
+            state.vault.last_activity = std::time::Instant::now();
         }
 
         match event {

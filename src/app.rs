@@ -1,17 +1,11 @@
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 use zeroize::Zeroizing;
 use crate::file_ops::open_file_dialog;
+use crate::strength::{GenMode, StrengthResult, haveibeenpwned, manual_strength};
+use crate::theme;
 use arboard::Clipboard;
-
-static WORDLIST: &str = include_str!("../assets/wordlist.txt");
-
-#[derive(PartialEq, Clone, Copy)]
-pub enum GenMode {
-    Password,
-    Passphrase,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordEntry {
@@ -32,249 +26,137 @@ pub struct PasswordList {
     pub entries: Vec<PasswordEntry>,
 }
 
-#[derive(PartialEq)]
-pub enum PasswordSafety {
-    TooShort,
-    MissingNumbers,
-    MissingSpecialChars,
-    NoLowerCase,
-    NoUpperCase,
-    TooFewWords,
-}
 
-pub struct AppState {
-    pub selected_file_name: String,
-    pub selected_file: Option<PathBuf>,
+pub struct Vault {
+    pub file_name: String,
+    pub file_path: Option<PathBuf>,
     pub store: Option<PasswordList>,
     pub encryption_key: Option<Zeroizing<[u8; 32]>>,
     pub last_activity: Instant,
     pub lock_timeout_secs: u64,
-
-    // Modal flags
-    pub add_password_modal: bool,
-    pub settings_modal: bool,
-    pub settings_timeout_mins: i32,
-    pub error_password_modal: bool,
-    pub warning_password_modal: bool,
-    pub gen_password_modal: bool,
-    pub gen_from_add_modal: bool,
-    pub filename_modal: bool,
-    pub master_modal: bool,
-    pub master_mode_is_create: bool,
-    pub confirm_delete_modal: bool,
-
-    // Input buffers
-    pub label_input: String,
-    pub username_input: String,
-    pub password_input: String,
-    pub notes_input: String,
-    pub totp_input: String,
-    pub password_search_input: String,
-    pub filename_input: String,
-    pub master_input: Zeroizing<String>,
-    pub url_input: String,
-    pub tag_input: String,
-    pub custom_fields_input: Vec<(String, String)>,
+}
 
 
-    // Password generator
-    pub gen_mode: GenMode,
-    pub password_length: i32,
-    pub gen_uppercase: bool,
-    pub gen_lowercase: bool,
-    pub gen_numbers: bool,
-    pub gen_special: bool,
-    pub gen_word_count: i32,
-    pub gen_separator: String,
-    pub ambiguous_characters: bool,
+pub struct EntryForm {
+    pub label: String,
+    pub username: String,
+    pub password: String,
+    pub notes: String,
+    pub totp: String,
+    pub url: String,
+    pub tag: String,
+    pub custom_fields: Vec<(String, String)>,
+}
 
-    // Clipboard
-    pub clipboard: Clipboard,
-    pub clipboard_clear_at: Option<Instant>,
+pub struct Generator {
+    pub mode: GenMode,
+    pub length: i32,
+    pub uppercase: bool,
+    pub lowercase: bool,
+    pub numbers: bool,
+    pub special: bool,
+    pub ambiguous: bool,
+    pub word_count: i32,
+    pub separator: String,
+}
 
-    // Edit/delete state
-    pub edit_index: Option<usize>,
-    pub delete_idx: Option<usize>,
+pub struct Modals {
+    pub add_password: bool,
+    pub settings: bool,
+    pub error_password: bool,
+    pub warning_password: bool,
+    pub gen_password: bool,
+    pub gen_from_add: bool,
+    pub filename: bool,
+    pub master: bool,
+    pub master_is_create: bool,
+    pub confirm_delete: bool,
+}
 
-    // Transient UI state
+
+pub struct ClipboardState {
+    pub handle: Clipboard,
+    pub clear_at: Option<Instant>,
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
+}
+
+pub struct AppState {
+    pub vault: Vault,
+    pub form: EntryForm,
+    pub generator: Generator,
+    pub modals: Modals,
+    pub clipboard: ClipboardState,
+
+    // One-off fields that don't belong in any group.
+    pub search: String,
+    pub filename_input: String,
+    pub master_input: Zeroizing<String>,
+    pub settings_timeout_mins: i32,
+    pub edit_index: Option<usize>,
+    pub delete_idx: Option<usize>,
     pub custom_error_message: Option<String>,
     pub strength_cache: Option<(String, StrengthResult)>,
     pub hibp_cache: std::collections::HashMap<String, bool>,
-}
-use sha1::{Digest, Sha1};
-pub fn haveibeenpwned(password: &str) -> bool{
-    let hash: String = Sha1::digest(password.as_bytes()).iter().map(|b| format!("{:02X}", b)).collect();
-    let (prefix, suffix) = hash.split_at(5);
-
-    let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
-    let body = match ureq::get(&url).call() {
-        Ok(mut response) => response.body_mut().read_to_string().unwrap_or_default(),
-        Err(_) => return false,
-    };
-    body.lines().any(|line: &str| {
-        line.split(':').next().is_some_and(|s: &str| s.eq_ignore_ascii_case(suffix))
-    })
-}
-
-pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
-    let words: Vec<&str> = password
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let is_passphrase = words.len() >= 2
-        && words.iter().all(|w| w.chars().all(|c| c.is_ascii_lowercase()));
-
-    if is_passphrase {
-        if words.len() < 4 {
-            return vec![PasswordSafety::TooFewWords];
-        }
-        return vec![];
-    }
-
-    let mut issues = Vec::new();
-
-    if password.len() < 15 {
-        issues.push(PasswordSafety::TooShort);
-    }
-    if !password.chars().any(|c| !c.is_alphanumeric()) {
-        issues.push(PasswordSafety::MissingSpecialChars);
-    }
-    if !password.chars().any(|c| c.is_numeric()) {
-        issues.push(PasswordSafety::MissingNumbers);
-    }
-    if !password.chars().any(|c| c.is_lowercase()) {
-        issues.push(PasswordSafety::NoLowerCase);
-    }
-    if !password.chars().any(|c| c.is_uppercase()) {
-        issues.push(PasswordSafety::NoUpperCase);
-    }
-
-    issues
-}
-
-pub fn generate_password(length: usize, uppercase: bool, lowercase: bool, numbers: bool, special: bool, ambiguous: bool) -> String {
-    use rand::seq::IndexedRandom;
-
-    let mut charset: Vec<u8> = Vec::new();
-    if uppercase { charset.extend_from_slice(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"); }
-    if lowercase { charset.extend_from_slice(b"abcdefghijklmnopqrstuvwxyz"); }
-    if numbers   { charset.extend_from_slice(b"0123456789"); }
-    if special   { charset.extend_from_slice(b"!@#$%^&*-_=?"); }
-    if !ambiguous { charset.retain(|c| !b"0OIl1B8S5Z2".contains(c)); }
-
-    if charset.is_empty() {
-        return String::new();
-    }
-
-    let mut rng = rand::rng();
-    (0..length)
-        .map(|_| *charset.choose(&mut rng).unwrap() as char)
-        .collect()
-}
-
-pub fn generate_passphrase(word_count: usize, separator: &str) -> String {
-    use rand::seq::IndexedRandom;
-    let words: Vec<&str> = WORDLIST.lines().filter(|l| !l.is_empty()).collect();
-    let mut rng = rand::rng();
-    (0..word_count)
-        .map(|_| *words.choose(&mut rng).unwrap())
-        .collect::<Vec<_>>()
-        .join(separator)
-}
-
-pub type StrengthResult = (u8, &'static str, [f32; 4]);
-
-pub fn bits_to_strength(bits: f64) -> StrengthResult {
-    match bits as u32 {
-        0..=29  => (0, "Very Weak",   [0.85, 0.15, 0.15, 1.0]),
-        30..=49 => (1, "Weak",        [0.90, 0.50, 0.10, 1.0]),
-        50..=65 => (2, "Fair",        [0.85, 0.75, 0.10, 1.0]),
-        66..=94 => (3, "Strong",      [0.35, 0.75, 0.20, 1.0]),
-        _       => (4, "Very Strong", [0.10, 0.70, 0.20, 1.0]),
-    }
-}
-
-pub fn manual_strength(password: &str) -> StrengthResult {
-    if password.is_empty() {
-        return (0, "—", [0.45, 0.45, 0.45, 1.0]);
-    }
-
-    let words: Vec<&str> = password
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let looks_like_passphrase = words.len() >= 2
-        && words.iter().all(|w| w.chars().all(|c| c.is_ascii_lowercase()));
-
-    if looks_like_passphrase {
-        let wordlist_size = WORDLIST.lines().filter(|l| !l.is_empty()).count() as f64;
-        return bits_to_strength(words.len() as f64 * wordlist_size.log2());
-    }
-
-    let mut pool = 0.0f64;
-    if password.chars().any(|c| c.is_ascii_lowercase()) { pool += 26.0; }
-    if password.chars().any(|c| c.is_ascii_uppercase()) { pool += 26.0; }
-    if password.chars().any(|c| c.is_ascii_digit())     { pool += 10.0; }
-    if password.chars().any(|c| !c.is_alphanumeric())   { pool += 32.0; }
-    if pool == 0.0 { pool = 26.0; }
-    bits_to_strength(password.len() as f64 * pool.log2())
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
-            selected_file_name: String::new(),
-            selected_file: None,
-            store: None,
-            encryption_key: None,
-            last_activity: Instant::now(),
-            lock_timeout_secs: crate::config::load().lock_timeout_secs,
+            vault: Vault {
+                file_name: String::new(),
+                file_path: None,
+                store: None,
+                encryption_key: None,
+                last_activity: Instant::now(),
+                lock_timeout_secs: crate::config::load().lock_timeout_secs,
+            },
+            form: EntryForm {
+                label: String::with_capacity(256),
+                username: String::with_capacity(256),
+                password: String::with_capacity(256),
+                notes: String::with_capacity(256),
+                totp: String::with_capacity(256),
+                url: String::with_capacity(256),
+                tag: String::with_capacity(256),
+                custom_fields: Vec::new(),
+            },
+            generator: Generator {
+                mode: GenMode::Password,
+                length: 24,
+                uppercase: true,
+                lowercase: true,
+                numbers: true,
+                special: true,
+                ambiguous: true,
+                word_count: 5,
+                separator: String::from("-"),
+            },
+            modals: Modals {
+                add_password: false,
+                settings: false,
+                error_password: false,
+                warning_password: false,
+                gen_password: false,
+                gen_from_add: false,
+                filename: false,
+                master: false,
+                master_is_create: false,
+                confirm_delete: false,
+            },
+            clipboard: ClipboardState {
+                handle: Clipboard::new().expect("Failed to access system clipboard"),
+                clear_at: None,
+                copied_field: None,
+                copied_clear_at: None,
+            },
 
-            add_password_modal: false,
-            settings_modal: false,
-            settings_timeout_mins: 0,
-            error_password_modal: false,
-            warning_password_modal: false,
-            gen_password_modal: false,
-            gen_from_add_modal: false,
-            filename_modal: false,
-            master_modal: false,
-            master_mode_is_create: false,
-            confirm_delete_modal: false,
-
-            label_input: String::with_capacity(256),
-            username_input: String::with_capacity(256),
-            password_input: String::with_capacity(256),
-            notes_input: String::with_capacity(256),
-            totp_input: String::with_capacity(256),
-            password_search_input: String::with_capacity(256),
+            search: String::with_capacity(256),
             filename_input: String::with_capacity(256),
             master_input: Zeroizing::new(String::new()),
-            url_input: String::with_capacity(256),
-            tag_input: String::with_capacity(256),
-            custom_fields_input: Vec::new(),
-
-            gen_mode: GenMode::Password,
-            password_length: 24,
-            gen_uppercase: true,
-            gen_lowercase: true,
-            gen_numbers: true,
-            gen_special: true,
-            gen_word_count: 5,
-            gen_separator: String::from("-"),
-            ambiguous_characters: true,
-
-
-            clipboard: Clipboard::new().expect("Failed to access system clipboard"),
-            clipboard_clear_at: None,
-
+            settings_timeout_mins: 0,
             edit_index: None,
             delete_idx: None,
-
-            copied_field: None,
-            copied_clear_at: None,
             custom_error_message: None,
             strength_cache: None,
             hibp_cache: std::collections::HashMap::new(),
@@ -283,17 +165,17 @@ impl AppState {
 
     pub fn open_file(&mut self) {
         if let Some((name, path)) = open_file_dialog() {
-            self.selected_file_name = name;
-            self.selected_file = Some(path);
-            self.master_modal = true;
+            self.vault.file_name = name;
+            self.vault.file_path = Some(path);
+            self.modals.master = true;
         }
     }
 
     pub fn close_file(&mut self) {
-        self.store = None;
-        self.selected_file = None;
-        self.selected_file_name.clear();
-        self.encryption_key = None;
+        self.vault.store = None;
+        self.vault.file_path = None;
+        self.vault.file_name.clear();
+        self.vault.encryption_key = None;
     }
 
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
@@ -308,34 +190,32 @@ impl AppState {
     }
 
     pub fn copy_to_clipboard(&mut self, text: &str, field_name: &str) {
-        crate::clipboard::set_excluded_from_history(&mut self.clipboard, text);
-        self.clipboard_clear_at = Some(Instant::now() + std::time::Duration::from_secs(10));
-        self.copied_field = Some(field_name.to_string());
-        self.copied_clear_at = Some(Instant::now() + std::time::Duration::from_secs(3));
+        crate::clipboard::set_excluded_from_history(&mut self.clipboard.handle, text);
+        self.clipboard.clear_at = Some(Instant::now() + Duration::from_secs(10));
+        self.clipboard.copied_field = Some(field_name.to_string());
+        self.clipboard.copied_clear_at = Some(Instant::now() + Duration::from_secs(3));
     }
 }
-
-
 
 fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Welcome to Aegis, Moonaw's password manager fully written in Rust.");
     ui.separator();
 
-    if state.store.is_none() {
+    if state.vault.store.is_none() {
         ui.text("Open a file to get started.");
         return;
     }
 
-    if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::F){
+    if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::F) {
         ui.set_keyboard_focus_here();
     }
 
-    ui.input_text("Search", &mut state.password_search_input).build();
+    ui.input_text("Search", &mut state.search).build();
 
-    let search_query = state.password_search_input.to_lowercase();
+    let search_query = state.search.to_lowercase();
     let mut pending_copy: Option<(String, &'static str)> = None;
 
-    if let Some(store) = &state.store {
+    if let Some(store) = &state.vault.store {
         ui.text(format!("Entry count: {}", store.entries.len()));
 
         for entry in &store.entries {
@@ -356,10 +236,7 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                     && let Ok(code) = totp.generate_current()
                 {
                     totp_code = Some(code);
-                    totp_timeout = {
-                        Option::from(totp.ttl().unwrap().to_string())
-                    }
-
+                    totp_timeout = Some(totp.ttl().unwrap().to_string());
                 }
             }
 
@@ -387,10 +264,8 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                 if !entry.url.is_empty() {
                     ui.same_line();
 
-                    let link_color = [0.27, 0.67, 1.0, 1.0];
-                    let _color = ui.push_style_color(imgui::StyleColor::Text, link_color);
+                    let _color = ui.push_style_color(imgui::StyleColor::Text, theme::LINK_COLOR);
                     ui.text(format!("@ {}", entry.url));
-
                     drop(_color);
 
                     if ui.is_item_clicked() {
@@ -440,14 +315,14 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
         state.copy_to_clipboard(&text, field);
     }
 
-    if let Some(field) = &state.copied_field {
+    if let Some(field) = &state.clipboard.copied_field {
         ui.separator();
         ui.text(format!("The {} has been copied to the clipboard!", field));
     }
 }
 
 fn render_add_tab(ui: &imgui::Ui, state: &mut AppState) {
-    if state.store.is_none() {
+    if state.vault.store.is_none() {
         ui.text("Open a file to get started.");
         return;
     }
@@ -455,24 +330,24 @@ fn render_add_tab(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Add passwords to your current password list.");
 
     if ui.button("Add new password") {
-        state.add_password_modal = true;
+        state.modals.add_password = true;
     }
 }
 
 fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
-    if state.store.is_none() {
+    if state.vault.store.is_none() {
         ui.text("Open a file to get started.");
         return;
     }
 
     ui.text("Delete passwords.");
 
-    if let Some(store) = &mut state.store {
+    if let Some(store) = &state.vault.store {
         for (i, entry) in store.entries.iter().enumerate() {
             ui.text(format!("{} - {}", entry.label, entry.username));
             ui.same_line();
             if ui.button(format!("Remove##remove{}", i)) {
-                state.confirm_delete_modal = true;
+                state.modals.confirm_delete = true;
                 state.delete_idx = Some(i);
             }
         }
@@ -480,7 +355,7 @@ fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
-    if state.store.is_none() {
+    if state.vault.store.is_none() {
         ui.text("Open a file to get started.");
         return;
     }
@@ -488,7 +363,7 @@ fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Modify passwords.");
 
     let mut clicked_idx = None;
-    if let Some(store) = &state.store {
+    if let Some(store) = &state.vault.store {
         for (i, entry) in store.entries.iter().enumerate() {
             ui.text(format!("{} - {}", entry.label, entry.username));
             ui.same_line();
@@ -499,33 +374,33 @@ fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if let Some(idx) = clicked_idx
-        && let Some(store) = &state.store
+        && let Some(store) = &state.vault.store
         && idx < store.entries.len()
     {
         let entry = &store.entries[idx];
-        state.label_input = entry.label.clone();
-        state.username_input = entry.username.clone();
-        state.password_input = entry.password.clone();
-        state.notes_input = entry.notes.clone();
-        state.totp_input = entry.totp_secret.clone().unwrap_or_default();
-        state.url_input = entry.url.clone();
+        state.form.label = entry.label.clone();
+        state.form.username = entry.username.clone();
+        state.form.password = entry.password.clone();
+        state.form.notes = entry.notes.clone();
+        state.form.totp = entry.totp_secret.clone().unwrap_or_default();
+        state.form.url = entry.url.clone();
+        state.form.tag = entry.tags.as_deref().map(|t| t.join(", ")).unwrap_or_default();
+        state.form.custom_fields = entry.custom_fields.clone();
         state.edit_index = Some(idx);
-        state.tag_input = entry.tags.as_deref().map(|t| t.join(", ")).unwrap_or_default();
-        state.custom_fields_input = entry.custom_fields.clone();
     }
 }
 
 fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
-    if state.store.is_none() {
+    if state.vault.store.is_none() {
         ui.text("Open a file to get started.");
         return;
     }
 
-    if let Some(store) = &mut state.store {
+    if let Some(store) = &state.vault.store {
         ui.text("Weak passwords:");
         for entry in &store.entries {
             let (score, _label, _) = manual_strength(&entry.password);
-            if score < 3{
+            if score < 3 {
                 ui.text(format!("{} - {}", entry.label, entry.username));
             }
         }
@@ -558,7 +433,7 @@ fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 ui.text(format!("The password \"{}\" has been pwned! Click the button to modify the password.", password));
                 ui.same_line();
                 if ui.button("Modify password") {
-                    state.gen_password_modal = true;
+                    state.modals.gen_password = true;
                 }
             }
         }
@@ -566,24 +441,24 @@ fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
-    if let Some(clear_at) = state.clipboard_clear_at && Instant::now() >= clear_at {
-        crate::clipboard::set_excluded_from_history(&mut state.clipboard, "");
-        state.clipboard_clear_at = None;
+    if let Some(clear_at) = state.clipboard.clear_at && Instant::now() >= clear_at {
+        crate::clipboard::set_excluded_from_history(&mut state.clipboard.handle, "");
+        state.clipboard.clear_at = None;
     }
 
-    if let Some(clear_at) = state.copied_clear_at && Instant::now() >= clear_at {
-        state.copied_clear_at = None;
-        state.copied_field = None;
+    if let Some(clear_at) = state.clipboard.copied_clear_at && Instant::now() >= clear_at {
+        state.clipboard.copied_clear_at = None;
+        state.clipboard.copied_field = None;
     }
 
-    if state.store.is_some()
-        && state.lock_timeout_secs > 0
-        && state.last_activity.elapsed().as_secs() >= state.lock_timeout_secs
+    if state.vault.store.is_some()
+        && state.vault.lock_timeout_secs > 0
+        && state.vault.last_activity.elapsed().as_secs() >= state.vault.lock_timeout_secs
     {
-        state.store = None;
-        state.encryption_key = None;
-        state.master_modal = true;
-        state.last_activity = Instant::now();
+        state.vault.store = None;
+        state.vault.encryption_key = None;
+        state.modals.master = true;
+        state.vault.last_activity = Instant::now();
     }
 
     ui.window("Aegis")
@@ -596,7 +471,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                         state.open_file();
                     }
                     if ui.menu_item("Create") {
-                        state.filename_modal = true;
+                        state.modals.filename = true;
                     }
                     if ui.menu_item("Close") {
                         state.close_file();
@@ -604,7 +479,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     if ui.menu_item("Import from CSV") {
                         match crate::file_ops::import_csv() {
                             Ok(Some(imported)) => {
-                                if let Some(store) = &mut state.store {
+                                if let Some(store) = &mut state.vault.store {
                                     store.entries.extend(imported.entries);
                                 }
                             }
@@ -613,27 +488,26 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                         }
                     }
                     if ui.menu_item("Export to CSV")
-                        && let Some(store) = &state.store
+                        && let Some(store) = &state.vault.store
                         && let Err(e) = crate::file_ops::export_csv(store) {
                             state.custom_error_message = Some(e);
                     }
                     ui.separator();
                     if ui.menu_item("Settings") {
-                        state.settings_timeout_mins = (state.lock_timeout_secs / 60) as i32;
-                        state.settings_modal = true;
+                        state.settings_timeout_mins = (state.vault.lock_timeout_secs / 60) as i32;
+                        state.modals.settings = true;
                     }
                 });
-                if state.store.is_some(){
+                if state.vault.store.is_some() {
                     ui.menu("Passwords", || {
                         if ui.menu_item("Generate password") {
-                            state.gen_password_modal = true;
+                            state.modals.gen_password = true;
                         }
                         if ui.menu_item("Add a password") {
-                            state.add_password_modal = true;
+                            state.modals.add_password = true;
                         }
                     });
                 }
-
             });
 
             imgui::TabBar::new("my_tabs").build(ui, || {
@@ -656,17 +530,15 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     ui.text("Aegis — a password manager written in Rust, by Moonaw.");
                     ui.separator();
 
-                    let link_color = [0.27, 0.67, 1.0, 1.0];
-                    let _color = ui.push_style_color(imgui::StyleColor::Text, link_color);
+                    let _color = ui.push_style_color(imgui::StyleColor::Text, theme::LINK_COLOR);
                     ui.text("https://moonaw.org");
-
                     drop(_color);
 
-                    if ui.is_item_clicked(){
-                        open::that("https://moonaw.org").unwrap();
+                    if ui.is_item_clicked() {
+                        let _ = open::that("https://moonaw.org");
                     }
 
-                    if ui.is_item_hovered(){
+                    if ui.is_item_hovered() {
                         ui.tooltip(|| ui.text("Click to open the link in browser."));
                     }
                 });
@@ -676,67 +548,67 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     // Modal dispatch — flags are set on one frame, open_popup is called on the next.
     // imgui requires this two-frame pattern to nest popups correctly.
 
-    if state.gen_password_modal && !state.add_password_modal{
+    if state.modals.gen_password && !state.modals.add_password {
         ui.open_popup("Generate a password");
-        state.gen_password_modal = false;
+        state.modals.gen_password = false;
     }
 
-    if let Some(_token) = ui.begin_modal_popup("Generate a password"){
+    if let Some(_token) = ui.begin_modal_popup("Generate a password") {
         crate::modals::generate_password_modal(ui, state);
     }
 
-    if state.confirm_delete_modal{
+    if state.modals.confirm_delete {
         ui.open_popup("Confirm Delete");
-        state.confirm_delete_modal = false;
+        state.modals.confirm_delete = false;
     }
 
-    if let Some(_token) = ui.begin_modal_popup("Confirm Delete"){
+    if let Some(_token) = ui.begin_modal_popup("Confirm Delete") {
         crate::modals::confirm_delete_modal(ui, state);
     }
 
-    if state.master_modal {
+    if state.modals.master {
         ui.open_popup("Master password");
-        state.master_modal = false;
+        state.modals.master = false;
     }
     if let Some(_token) = ui.begin_modal_popup("Master password") {
         crate::modals::enter_master_password(ui, state);
     }
 
-    if state.filename_modal {
+    if state.modals.filename {
         ui.open_popup("Create new file");
-        state.filename_modal = false;
+        state.modals.filename = false;
     }
     if let Some(_token) = ui.begin_modal_popup("Create new file") {
         crate::modals::new_file_title_modal(ui, state);
     }
 
-    if state.add_password_modal {
+    if state.modals.add_password {
         ui.open_popup("Add a password");
-        state.add_password_modal = false;
+        state.modals.add_password = false;
     }
     if let Some(_token) = ui.begin_modal_popup("Add a password") {
         crate::modals::password_modal(ui, state);
 
-        if state.error_password_modal {
+        if state.modals.error_password {
             ui.open_popup("Error");
-            state.error_password_modal = false;
+            state.modals.error_password = false;
         }
         if let Some(_token) = ui.begin_modal_popup("Error") {
             crate::modals::error_password_modal(ui);
         }
 
-        if state.warning_password_modal {
+        if state.modals.warning_password {
             ui.open_popup("Warning");
-            state.warning_password_modal = false;
+            state.modals.warning_password = false;
         }
         if let Some(_token) = ui.begin_modal_popup("Warning") {
             crate::modals::warning_modal(ui, state);
         }
 
-        if state.gen_password_modal {
+        if state.modals.gen_password {
             ui.open_popup("Generate password");
-            state.gen_password_modal = false;
-            state.gen_from_add_modal = true;
+            state.modals.gen_password = false;
+            state.modals.gen_from_add = true;
         }
         if let Some(_token) = ui.begin_modal_popup("Generate password") {
             crate::modals::generate_password_modal(ui, state);
@@ -757,9 +629,9 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::custom_error_modal(ui, state);
     }
 
-    if state.settings_modal {
+    if state.modals.settings {
         ui.open_popup("Settings");
-        state.settings_modal = false;
+        state.modals.settings = false;
     }
     if let Some(_token) = ui.begin_modal_popup("Settings") {
         crate::modals::settings_modal(ui, state);

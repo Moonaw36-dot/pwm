@@ -142,10 +142,10 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     let filedata = encrypt_store(&empty_store, &key, &salt)?;
     std::fs::write(&path, filedata).map_err(|e| e.to_string())?;
 
-    state.store = Some(empty_store);
-    state.encryption_key = Some(key);
-    state.selected_file = Some(path);
-    state.selected_file_name = file_name.to_string();
+    state.vault.store = Some(empty_store);
+    state.vault.encryption_key = Some(key);
+    state.vault.file_path = Some(path);
+    state.vault.file_name = file_name.to_string();
     Ok(())
 }
 

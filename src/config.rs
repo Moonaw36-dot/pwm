@@ -28,15 +28,13 @@ pub fn load() -> Config {
     serde_json::from_str(&data).unwrap_or_default()
 }
 
-pub fn save(config: &Config) {
-    let path = match config_path() {
-        Some(p) => p,
-        None => return,
+pub fn save(config: &Config) -> Result<(), String> {
+    let Some(path) = config_path() else {
+        return Err("Could not determine config directory".to_string());
     };
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    if let Ok(json) = serde_json::to_string_pretty(config) {
-        let _ = std::fs::write(path, json);
-    }
+    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
 }
