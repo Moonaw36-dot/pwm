@@ -4,7 +4,7 @@ use argon2::Argon2;
 use aes_gcm::{Aes256Gcm, KeyInit, AeadCore};
 use aes_gcm::aead::{Aead, OsRng};
 use zeroize::Zeroizing;
-use crate::app::{AppState, PasswordList};
+use crate::app::{AppState, PasswordEntry, PasswordList};
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -12,6 +12,7 @@ const HEADER_LEN: usize = SALT_LEN + NONCE_LEN;
 
 pub fn open_file_dialog() -> Option<(String, PathBuf)> {
     let path = rfd::FileDialog::new()
+        .add_filter("CSV", &["csv"])
         .add_filter("JSON", &["json"])
         .add_filter("All Files", &["*"])
         .set_directory(".")
@@ -25,6 +26,34 @@ pub fn save_file_dialog() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .add_filter("CSV", &["csv"])
         .save_file()
+}
+
+pub fn import_csv() -> Result<Option<PasswordList>, String> {
+    let Some((_, path)) = open_file_dialog() else { return Ok(None) };
+    let mut csv = csv::Reader::from_path(path).map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+
+    for result in csv.records() {
+        let record = result.map_err(|e| e.to_string())?;
+        let tags_raw = record.get(5).unwrap_or("").trim().to_string();
+        let tags = if tags_raw.is_empty() {
+            None
+        } else {
+            Some(tags_raw.split(';').map(|s| s.to_string()).collect())
+        };
+        entries.push(PasswordEntry {
+            label:    record.get(0).unwrap_or("").to_string(),
+            username: record.get(1).unwrap_or("").to_string(),
+            password: record.get(2).unwrap_or("").to_string(),
+            url:      record.get(3).unwrap_or("").to_string(),
+            notes:    record.get(4).unwrap_or("").to_string(),
+            totp_secret: None,
+            tags,
+        });
+    }
+
+    Ok(Some(PasswordList { entries }))                                                              
 }
 
 pub fn export_csv(store: &PasswordList) -> Result<(), String> {
