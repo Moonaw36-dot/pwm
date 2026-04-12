@@ -147,6 +147,28 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Notes##add", &mut state.notes_input).build();
     ui.separator();
 
+
+    if ui.button("Add field") {
+        state.custom_fields_input.push((String::new(), String::new()));
+    }
+    
+
+    let mut remove_idx = None;
+    for (i, (key, val)) in state.custom_fields_input.iter_mut().enumerate() {
+        ui.set_next_item_width(150.0);
+        ui.input_text(format!("##add_field_name_{i}"), key).hint("Field name").build();
+        ui.same_line();
+        ui.set_next_item_width(180.0);
+        ui.input_text(format!("##add_field_value_{i}"), val).build();
+        ui.same_line();
+        if ui.button(format!("x##add_field_remove_{i}")) {
+            remove_idx = Some(i);
+        }
+    }
+    if let Some(i) = remove_idx {
+        state.custom_fields_input.remove(i);
+    }
+
     if ui.button("Confirm") {
         if state.username_input.is_empty() || state.password_input.is_empty() || state.label_input.is_empty() {
             state.error_password_modal = true;
@@ -160,6 +182,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.same_line();
     if ui.button("Close") {
+        state.custom_fields_input.clear();
         ui.close_current_popup();
     }
 }
@@ -275,6 +298,10 @@ fn add_entry_from_inputs(state: &mut AppState) {
         url: std::mem::take(&mut state.url_input),
         totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
         tags: parse_tags(state.tag_input.clone()),
+        custom_fields: std::mem::take(&mut state.custom_fields_input)
+            .into_iter()
+            .filter(|(k, _)| !k.trim().is_empty())
+            .collect(),
     };
 
     if let Some(store) = &mut state.store {
@@ -366,6 +393,27 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.input_text("Notes", &mut state.notes_input).build();
     ui.input_text("TOTP###MODIFY", &mut state.totp_input).build();
+    ui.separator();
+
+    if ui.button("Add field##modify") {
+        state.custom_fields_input.push((String::new(), String::new()));
+    }
+
+    let mut remove_idx = None;
+    for (i, (key, val)) in state.custom_fields_input.iter_mut().enumerate() {
+        ui.set_next_item_width(150.0);
+        ui.input_text(format!("##edit_field_name_{i}"), key).hint("Field name").build();
+        ui.same_line();
+        ui.set_next_item_width(180.0);
+        ui.input_text(format!("##edit_field_value_{i}"), val).build();
+        ui.same_line();
+        if ui.button(format!("x##edit_field_remove_{i}")) {
+            remove_idx = Some(i);
+        }
+    }
+    if let Some(i) = remove_idx {
+        state.custom_fields_input.remove(i);
+    }
 
     if ui.button("Save")
         && let Some(idx) = state.edit_index
@@ -380,6 +428,10 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
             url: state.url_input.clone(),
             totp_secret: sanitize_totp(std::mem::take(&mut state.totp_input)),
             tags: parse_tags(std::mem::take(&mut state.tag_input)),
+            custom_fields: std::mem::take(&mut state.custom_fields_input)
+                .into_iter()
+                .filter(|(k, _)| !k.trim().is_empty())
+                .collect(),
         };
         if let Some(key) = &state.encryption_key
             && let Err(e) = save_store(&state.selected_file, store, key) {
@@ -392,6 +444,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Cancel") {
         state.edit_index = None;
+        state.custom_fields_input.clear();
         state.label_input.clear();
         state.username_input.clear();
         state.password_input.clear();

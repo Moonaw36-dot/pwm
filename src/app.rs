@@ -23,6 +23,8 @@ pub struct PasswordEntry {
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub custom_fields: Vec<(String, String)>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,6 +74,8 @@ pub struct AppState {
     pub master_input: Zeroizing<String>,
     pub url_input: String,
     pub tag_input: String,
+    pub custom_fields_input: Vec<(String, String)>,
+
 
     // Password generator
     pub gen_mode: GenMode,
@@ -250,6 +254,7 @@ impl AppState {
             master_input: Zeroizing::new(String::new()),
             url_input: String::with_capacity(256),
             tag_input: String::with_capacity(256),
+            custom_fields_input: Vec::new(),
 
             gen_mode: GenMode::Password,
             password_length: 24,
@@ -419,6 +424,12 @@ fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                         ui.text("Right click to copy the username.");
                         ui.separator();
                         ui.text("Middle click to copy the TOTP.");
+                        if !entry.custom_fields.is_empty() {
+                            ui.separator();
+                            for (name, value) in &entry.custom_fields {
+                                ui.text(format!("{}: {}", name, value));
+                            }
+                        }
                     });
                 }
             }
@@ -500,6 +511,7 @@ fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
         state.url_input = entry.url.clone();
         state.edit_index = Some(idx);
         state.tag_input = entry.tags.as_deref().map(|t| t.join(", ")).unwrap_or_default();
+        state.custom_fields_input = entry.custom_fields.clone();
     }
 }
 

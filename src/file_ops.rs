@@ -12,7 +12,6 @@ const HEADER_LEN: usize = SALT_LEN + NONCE_LEN;
 
 pub fn open_file_dialog() -> Option<(String, PathBuf)> {
     let path = rfd::FileDialog::new()
-        .add_filter("CSV", &["csv"])
         .add_filter("JSON", &["json"])
         .add_filter("All Files", &["*"])
         .set_directory(".")
@@ -22,66 +21,91 @@ pub fn open_file_dialog() -> Option<(String, PathBuf)> {
     Some((name, path))
 }
 
-pub fn save_file_dialog() -> Option<PathBuf> {
+fn open_csv_dialog() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("CSV", &["csv"])
+        .add_filter("All Files", &["*"])
+        .set_directory(".")
+        .pick_file()
+}
+
+fn save_csv_dialog() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .add_filter("CSV", &["csv"])
         .save_file()
 }
 
 pub fn import_csv() -> Result<Option<PasswordList>, String> {
-    let Some((_, path)) = open_file_dialog() else { return Ok(None) };
-    let mut csv = csv::Reader::from_path(path).map_err(|e| e.to_string())?;
+    let Some(path) = open_csv_dialog() else { return Ok(None) };
+    let mut reader = csv::Reader::from_path(path).map_err(|e| e.to_string())?;
+
+    let headers = reader.headers().map_err(|e| e.to_string())?.clone();
+    let col = |name: &str| headers.iter().position(|h| h.eq_ignore_ascii_case(name));
+
+    let idx_label    = col("label").or_else(|| col("name")).or_else(|| col("title"));
+    let idx_username = col("username").or_else(|| col("login").or_else(|| col("email")));
+    let idx_password = col("password").or_else(|| col("pass"));
+    let idx_url      = col("url").or_else(|| col("website").or_else(|| col("site")));
+    let idx_notes    = col("notes").or_else(|| col("note").or_else(|| col("comment")));
+    let idx_tags     = col("tags").or_else(|| col("tag"));
+    let idx_totp     = col("totp_secret").or_else(|| col("totp").or_else(|| col("otp")));
+
+    let get = |r: &csv::StringRecord, idx: Option<usize>| -> String {
+        idx.and_then(|i| r.get(i)).unwrap_or("").trim().to_string()
+    };
 
     let mut entries = Vec::new();
-
-    for result in csv.records() {
+    for result in reader.records() {
         let record = result.map_err(|e| e.to_string())?;
-        let tags_raw = record.get(5).unwrap_or("").trim().to_string();
+
+        let tags_raw = get(&record, idx_tags);
         let tags = if tags_raw.is_empty() {
             None
         } else {
-            Some(tags_raw.split(';').map(|s| s.to_string()).collect())
+            Some(tags_raw.split(';').map(|s| s.trim().to_string()).collect())
         };
+
+        let totp_raw = get(&record, idx_totp);
+        let totp_secret = if totp_raw.is_empty() { None } else { Some(totp_raw) };
+
         entries.push(PasswordEntry {
-            label:    record.get(0).unwrap_or("").to_string(),
-            username: record.get(1).unwrap_or("").to_string(),
-            password: record.get(2).unwrap_or("").to_string(),
-            url:      record.get(3).unwrap_or("").to_string(),
-            notes:    record.get(4).unwrap_or("").to_string(),
-            totp_secret: None,
+            label:    get(&record, idx_label),
+            username: get(&record, idx_username),
+            password: get(&record, idx_password),
+            url:      get(&record, idx_url),
+            notes:    get(&record, idx_notes),
             tags,
+            totp_secret,
+            custom_fields: Vec::new(),
         });
     }
 
-    Ok(Some(PasswordList { entries }))                                                              
+    Ok(Some(PasswordList { entries }))
 }
 
 pub fn export_csv(store: &PasswordList) -> Result<(), String> {
-    let Some(path) = save_file_dialog() else { return Ok(()) };
+    let Some(path) = save_csv_dialog() else { return Ok(()) };
 
-    let mut csv = String::from("label,username,password,url,notes,tags\n");
+    let mut writer = csv::Writer::from_path(&path).map_err(|e| e.to_string())?;
+
+    writer.write_record(["label", "username", "password", "url", "notes", "tags", "totp_secret"])
+        .map_err(|e| e.to_string())?;
+
     for entry in &store.entries {
         let tags = entry.tags.as_deref().map(|t| t.join(";")).unwrap_or_default();
-        csv.push_str(&format!(
-            "{},{},{},{},{},{}\n",
-            escape_csv(&entry.label),
-            escape_csv(&entry.username),
-            escape_csv(&entry.password),
-            escape_csv(&entry.url),
-            escape_csv(&entry.notes),
-            escape_csv(&tags),
-        ));
+        let totp = entry.totp_secret.as_deref().unwrap_or("");
+        writer.write_record([
+            &entry.label,
+            &entry.username,
+            &entry.password,
+            &entry.url,
+            &entry.notes,
+            &tags,
+            totp,
+        ]).map_err(|e| e.to_string())?;
     }
 
-    std::fs::write(&path, csv).map_err(|e| e.to_string())
-}
-
-fn escape_csv(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
+    writer.flush().map_err(|e| e.to_string())
 }
 
 fn derive_key(password: &str, salt: &[u8; 16]) -> Zeroizing<[u8; 32]> {
