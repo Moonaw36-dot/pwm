@@ -1,4 +1,5 @@
 use std::time::Instant;
+use totp_rs::TOTP;
 use crate::models::{AppState};
 use crate::theme;
 use crate::strength::{haveibeenpwned, manual_strength};
@@ -11,6 +12,8 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
         ui.text("Open a file to get started.");
         return;
     }
+
+   
 
     if ui.io().key_ctrl && ui.is_key_pressed(imgui::Key::F) {
         ui.set_keyboard_focus_here();
@@ -58,13 +61,30 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
             let mut totp_code: Option<String> = None;
             let mut totp_timeout: Option<String> = None;
             if let Some(secret) = &entry.totp_secret {
-                use totp_rs::{Algorithm, Secret, TOTP};
-                if let Ok(bytes) = Secret::Encoded(secret.replace(" ", "").to_uppercase()).to_bytes()
-                    && let Ok(totp) = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes)
-                    && let Ok(code) = totp.generate_current()
-                {
-                    totp_code = Some(code);
-                    totp_timeout = Some(totp.ttl().unwrap().to_string());
+                use totp_rs::{Algorithm, TOTP};
+
+
+                let clean_secret = secret.replace(" ", "").to_uppercase();
+                if let Some(bytes) = base32::decode(base32::Alphabet::RFC4648 { padding: false }, &clean_secret) {
+
+                    match TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string()) {
+                        Ok(totp) => {
+                            if let Ok(code) = totp.generate_current() {
+                                totp_code = Some(code);
+
+
+                                use std::time::{SystemTime, UNIX_EPOCH};
+                                if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
+                                    let step = 30;
+                                    let ttl = step - (now.as_secs() % step);
+                                    totp_timeout = Some(ttl.to_string());
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("TOTP error for {}: {:?}", entry.label, e),
+                    }
+                } else {
+                    eprintln!("Failed to decode Base32 secret for {}", entry.label);
                 }
             }
 
