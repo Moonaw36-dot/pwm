@@ -135,10 +135,13 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Tag##add", &mut state.form.tag).build();
     ui.input_text("URL / Website##add", &mut state.form.url).build();
 
-    if !state.form.is_secure_note{
+
+    if state.form.is_secure_note{
         state.form.username.clear();
         state.form.password.clear();
+    }
 
+    if !state.form.is_secure_note{
 
         ui.input_text("Username##add", &mut state.form.username).build();
         ui.input_text("Password##add", &mut state.form.password).password(true).build();
