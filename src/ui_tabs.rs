@@ -1,5 +1,4 @@
 use std::time::Instant;
-use totp_rs::TOTP;
 use crate::models::{AppState};
 use crate::theme;
 use crate::strength::{haveibeenpwned, manual_strength};
