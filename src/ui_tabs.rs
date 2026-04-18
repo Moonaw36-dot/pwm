@@ -287,11 +287,13 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         ui.separator();
 
         ui.text("Old passwords:");
-        let thirty_days = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        let thirty_days = 30 * 24 * 60 * 60;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
         for entry in &store.entries {
             if let Some(created_at) = entry.created_at
-                && let Some(duration) = Instant::now().checked_duration_since(created_at)
-                && duration > thirty_days
+                && now > created_at
+                && now - created_at > thirty_days
             {
                 ui.text(format!("{} - {}", entry.label, entry.username));
             }

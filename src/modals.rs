@@ -347,7 +347,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
             .filter(|(k, _)| !k.trim().is_empty())
             .collect(),
         is_secure_note: state.form.is_secure_note,
-        created_at: Some(Instant::now()),
+        created_at: Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
     };
 
     if let Some(store) = &mut state.vault.store {

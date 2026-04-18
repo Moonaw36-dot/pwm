@@ -11,3 +11,11 @@
 - [X] **Password expiry warnings** — optional expiry date per entry, Health tab flags expired/expiring passwords
 - [ ] **Recent files list** — persist last N opened vault paths in config, show in the Files menu
 - [X] **Secure notes** — entries with only a title and body, no username/password fields
+
+## Development Roadmap (New Features)
+- [ ] **Database compacting/cleanup** — Logic to optimize vault file size.
+- [ ] **Search enhancements** — Fuzzy search and tag-based filtering.
+- [ ] **Import from JSON/Bitwarden format** — Expand migration options beyond CSV.
+- [ ] **CLI interface** — Add a CLI mode for querying/generating passwords.
+- [ ] **Persistent password expiry** — Add a dedicated `expiry_date` field (persisted) to `PasswordEntry` to replace the current session-based logic.
+- [ ] **Custom field persistence in CSV** — Update CSV import/export to handle key-value custom fields.

@@ -18,8 +18,7 @@ pub struct PasswordEntry {
     pub url: String,
     pub custom_fields: Vec<(String, String)>,
     pub is_secure_note: bool,
-    #[serde(skip)]
-    pub created_at: Option<Instant>,
+    pub created_at: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
