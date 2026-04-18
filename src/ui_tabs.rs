@@ -257,7 +257,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
 
         if !weak_passwords.is_empty() {
             ui.text("Weak passwords: ");
-            for password in weak_passwords {
+            for password in &weak_passwords {
                 ui.text(password);
             }
 
@@ -275,7 +275,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let reused_groups: Vec<_> = seen.values().filter(|labels| labels.len() > 1).collect();
         if !reused_groups.is_empty() {
             ui.text("Reused passwords:");
-            for labels in reused_groups {
+            for labels in &reused_groups {
                 ui.text(format!("Reused by: {}", labels.join(", ")));
             }
             ui.separator();
@@ -301,7 +301,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         if !pwned_passwords.is_empty() {
             ui.text("Pwned passwords:");
 
-            for password in pwned_passwords {
+            for password in &pwned_passwords {
                 ui.text(format!("The password \"{}\" has been pwned! Click the button to modify the password.", password));
                 ui.same_line();
                 if ui.button("Modify password") {
@@ -329,10 +329,13 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         }
 
 
-        for password in old_passwords {
+        for password in &old_passwords {
             ui.text(format!("{} is old! You should update it!", password));
         }
 
+        if weak_passwords.is_empty() && reused_groups.is_empty() && pwned_passwords.is_empty() && old_passwords.is_empty() {
+            ui.text("Good job! Every password is safe!");
+        }
 
     }
 }
