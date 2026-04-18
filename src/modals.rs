@@ -1,4 +1,4 @@
-use std::time::Instant;
+
 use zeroize::Zeroize;
 use crate::app::{AppState, PasswordEntry};
 use crate::strength::{GenMode, PasswordSafety, StrengthResult, generate_passphrase, generate_password, verify_password};
