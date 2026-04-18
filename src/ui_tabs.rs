@@ -244,32 +244,48 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if let Some(store) = &state.vault.store {
-        ui.text("Weak passwords:");
+
+
+        let mut weak_passwords: Vec<String> = Vec::new();
+
         for entry in &store.entries {
             let (score, _label, _) = manual_strength(&entry.password);
             if score < 3 {
-                ui.text(format!("{} - {}", entry.label, entry.username));
+                weak_passwords.push(entry.password.clone());
             }
         }
-        ui.separator();
+
+        if !weak_passwords.is_empty() {
+            ui.text("Weak passwords: ");
+            for password in weak_passwords {
+                ui.text(password);
+            }
+
+            ui.separator();
+        }
+
 
         use std::collections::HashMap;
         let mut seen: HashMap<&str, Vec<&str>> = HashMap::new();
 
-        ui.text("Reused passwords:");
         for entry in &store.entries {
             seen.entry(entry.password.as_str()).or_default().push(entry.username.as_str());
         }
 
-        for labels in seen.values() {
-            if labels.len() > 1 {
+        let reused_groups: Vec<_> = seen.values().filter(|labels| labels.len() > 1).collect();
+        if !reused_groups.is_empty() {
+            ui.text("Reused passwords:");
+            for labels in reused_groups {
                 ui.text(format!("Reused by: {}", labels.join(", ")));
             }
+            ui.separator();
         }
 
-        ui.separator();
 
-        ui.text("Pwned passwords:");
+
+
+
+        let mut pwned_passwords: Vec<String> = Vec::new();
         for i in 0..store.entries.len() {
             let password = store.entries[i].password.clone();
             if !state.hibp_cache.contains_key(&password) {
@@ -277,26 +293,46 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 state.hibp_cache.insert(password.clone(), result);
             }
             if state.hibp_cache[&password] {
+                pwned_passwords.push(password);
+            }
+        }
+
+
+        if !pwned_passwords.is_empty() {
+            ui.text("Pwned passwords:");
+
+            for password in pwned_passwords {
                 ui.text(format!("The password \"{}\" has been pwned! Click the button to modify the password.", password));
                 ui.same_line();
                 if ui.button("Modify password") {
                     state.modals.gen_password = true;
                 }
             }
+            ui.separator();
         }
-        ui.separator();
 
-        ui.text("Old passwords:");
+
+
+
         let thirty_days = 30 * 24 * 60 * 60;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+        let mut old_passwords: Vec<&str> = Vec::new();
 
         for entry in &store.entries {
             if let Some(created_at) = entry.created_at
                 && now > created_at
                 && now - created_at > thirty_days
             {
-                ui.text(format!("{} - {}", entry.label, entry.username));
+                old_passwords.push(entry.password.as_str());
             }
         }
+
+
+        for password in old_passwords {
+            ui.text(format!("{} is old! You should update it!", password));
+        }
+
+
     }
 }
