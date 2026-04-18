@@ -22,8 +22,10 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         state.vault.last_activity = std::time::Instant::now();
     }
 
+    let [width, height] = ui.io().display_size;
     ui.window("Aegis")
-        .size([550.0, 200.0], imgui::Condition::FirstUseEver)
+        .position([0.0, 0.0], imgui::Condition::Always)
+        .size([width, height], imgui::Condition::Always)
         .menu_bar(true)
         .build(|| {
             ui.menu_bar(|| {

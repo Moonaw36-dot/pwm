@@ -103,7 +103,7 @@ fn main() {
         config: Some(imgui::FontConfig {
             oversample_h: 2,
             oversample_v: 2,
-            pixel_snap_h: false,
+            pixel_snap_h: true,
             ..Default::default()
         }),
     }]);
