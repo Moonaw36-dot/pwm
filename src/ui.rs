@@ -144,14 +144,14 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
     if let Some(_token) = ui.begin_modal_popup("Master password") {
         crate::modals::enter_master_password(ui, state);
+    }
 
-        if state.custom_success_message.is_some() {
-            ui.open_popup("Success");
-        }
-
-        if let Some(_token) = ui.begin_modal_popup("Success") {
-            crate::modals::success_modal(ui, state);
-        }
+    if state.modals.show_success {
+        ui.open_popup("Success");
+        state.modals.show_success = false;
+    }
+    if let Some(_token) = ui.begin_modal_popup("Success") {
+        crate::modals::success_modal(ui, state);
     }
 
 

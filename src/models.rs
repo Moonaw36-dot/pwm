@@ -72,6 +72,7 @@ pub struct Modals {
     pub master: bool,
     pub master_is_create: bool,
     pub confirm_delete: bool,
+    pub show_success: bool,
 }
 
 pub struct ClipboardState {

@@ -1,4 +1,5 @@
 use sha1::{Digest, Sha1};
+use std::time::Duration;
 
 static WORDLIST: &str = include_str!("../assets/wordlist.txt");
 
@@ -29,7 +30,7 @@ pub enum PasswordSafety {
 
 pub type StrengthResult = (u8, &'static str, [f32; 4]);
 
-pub fn haveibeenpwned(password: &str) -> bool {
+pub fn haveibeenpwned(password: &str) -> Result<bool, String> {
     let hash: String = Sha1::digest(password.as_bytes())
         .iter()
         .map(|b| format!("{:02X}", b))
@@ -37,13 +38,19 @@ pub fn haveibeenpwned(password: &str) -> bool {
     let (prefix, suffix) = hash.split_at(5);
 
     let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
-    let body = match ureq::get(&url).call() {
-        Ok(mut response) => response.body_mut().read_to_string().unwrap_or_default(),
-        Err(_) => return false,
-    };
-    body.lines().any(|line: &str| {
+    let config = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_per_call(Some(Duration::from_secs(10)))
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let body = agent.get(&url).call()
+        .map_err(|e| format!("HIBP request failed: {e}"))?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("HIBP response read failed: {e}"))?;
+    Ok(body.lines().any(|line: &str| {
         line.split(':').next().is_some_and(|s: &str| s.eq_ignore_ascii_case(suffix))
-    })
+    }))
 }
 
 pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
@@ -66,16 +73,16 @@ pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
     if password.len() < MIN_PASSWORD_LENGTH {
         issues.push(PasswordSafety::TooShort);
     }
-    if !password.chars().any(|c| !c.is_alphanumeric()) {
+    if !password.chars().any(|c| !c.is_ascii_alphanumeric()) {
         issues.push(PasswordSafety::MissingSpecialChars);
     }
-    if !password.chars().any(|c| c.is_numeric()) {
+    if !password.chars().any(|c| c.is_ascii_digit()) {
         issues.push(PasswordSafety::MissingNumbers);
     }
-    if !password.chars().any(|c| c.is_lowercase()) {
+    if !password.chars().any(|c| c.is_ascii_lowercase()) {
         issues.push(PasswordSafety::NoLowerCase);
     }
-    if !password.chars().any(|c| c.is_uppercase()) {
+    if !password.chars().any(|c| c.is_ascii_uppercase()) {
         issues.push(PasswordSafety::NoUpperCase);
     }
 
@@ -150,7 +157,7 @@ pub fn manual_strength(password: &str) -> StrengthResult {
     if password.chars().any(|c| c.is_ascii_lowercase()) { pool += 26.0; }
     if password.chars().any(|c| c.is_ascii_uppercase()) { pool += 26.0; }
     if password.chars().any(|c| c.is_ascii_digit())     { pool += 10.0; }
-    if password.chars().any(|c| !c.is_alphanumeric())   { pool += 32.0; }
+    if password.chars().any(|c| !c.is_ascii_alphanumeric()) { pool += 32.0; }
     if pool == 0.0 { pool = 26.0; }
     bits_to_strength(password.len() as f64 * pool.log2())
 }

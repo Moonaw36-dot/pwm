@@ -236,7 +236,10 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
         ui.text("Your vault has a keyfile. Please press the button to select it.");
         if ui.button("Select keyfile") {
             match crate::file_ops::load_keyfile(state){
-                Ok(_) => { state.custom_success_message = Some("Successfully selected keyfile!".to_string()); },
+                Ok(_) => {
+                    state.custom_success_message = Some("Successfully selected keyfile!".to_string());
+                    state.modals.show_success = true;
+                },
                 Err(error) => {
                     state.custom_error_message = Some(error);
                     return;
@@ -250,6 +253,8 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
             let filename = state.filename_input.clone();
             match create_file(&filename, state) {
                 Ok(_) => {
+                    state.custom_success_message = Some("Vault created successfully!".to_string());
+                    state.modals.show_success = true;
                     state.filename_input.clear();
                     state.master_input.zeroize();
                     state.modals.master_is_create = false;
@@ -314,7 +319,6 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.same_line();
     if ui.button("Ignore") {
-        state.clear_inputs();
         add_entry_from_inputs(state);
         ui.close_current_popup();
     }
@@ -347,7 +351,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
             .filter(|(k, _)| !k.trim().is_empty())
             .collect(),
         is_secure_note: state.form.is_secure_note,
-        created_at: Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+        created_at: Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()),
     };
 
     if let Some(store) = &mut state.vault.store {

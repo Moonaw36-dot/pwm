@@ -1,6 +1,6 @@
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use std::time::{Duration, Instant};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 use crate::file_ops::{open_file_dialog, save_store};
 use crate::strength::{StrengthResult, manual_strength};
 
@@ -50,6 +50,7 @@ impl AppState {
                 master: false,
                 master_is_create: false,
                 confirm_delete: false,
+                show_success: false,
             },
             clipboard: crate::models::ClipboardState {
                 handle: arboard::Clipboard::new().expect("Failed to access system clipboard"),
@@ -89,7 +90,7 @@ impl AppState {
     }
 
     pub fn clear_inputs(&mut self) {
-        self.form.password.clear();
+        self.form.password.zeroize();
         self.form.custom_fields.clear();
         self.form.url.clear();
         self.form.label.clear();

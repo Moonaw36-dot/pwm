@@ -111,10 +111,12 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
     writer.flush().map_err(|e| e.to_string())
 }
 
-fn derive_key(password: &str, salt: &[u8; 16]) -> Zeroizing<[u8; 32]> {
+fn derive_key(password: &str, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, String> {
     let mut key = Zeroizing::new([0u8; 32]);
-    let _ = Argon2::default().hash_password_into(password.as_bytes(), salt, &mut *key);
-    key
+    Argon2::default()
+        .hash_password_into(password.as_bytes(), salt, &mut *key)
+        .map_err(|e| format!("Key derivation failed: {e}"))?;
+    Ok(key)
 }
 
 fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Vec<u8>, String> {
@@ -141,7 +143,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     let mut salt = [0u8; SALT_LEN];
     rand::rng().fill_bytes(&mut salt);
 
-    let key = derive_key(&state.master_input, &salt);
+    let key = derive_key(&state.master_input, &salt)?;
     let filedata = encrypt_store(&empty_store, &key, &salt)?;
     std::fs::write(&path, filedata).map_err(|e| e.to_string())?;
 
@@ -214,7 +216,7 @@ pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, Zeroi
     let nonce_bytes: [u8; 12] = data[SALT_LEN..HEADER_LEN].try_into().ok()?;
     let ciphertext = &data[HEADER_LEN..];
 
-    let key = derive_key(password, &salt);
+    let key = derive_key(password, &salt).ok()?;
     let cipher = Aes256Gcm::new((&*key).into());
     let plaintext = cipher.decrypt(&nonce_bytes.into(), ciphertext).ok()?;
 
