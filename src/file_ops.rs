@@ -164,7 +164,7 @@ fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Ve
 
 pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> {
     let Some(dir) = rfd::FileDialog::new().set_directory(".").pick_folder() else {
-        return Err("No file selected".parse().unwrap());
+        return Err("No file selected".to_string());
     };
 
     let path: PathBuf = if file_name.ends_with(".aegis") {
@@ -255,7 +255,7 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
 
     if let Some(vault_path) = &state.vault.file_path {
         let mut config = crate::config::load();
-        config.keyfile_hashes.insert(vault_path.clone(), state.vault.keyfile_hash.unwrap());
+        config.keyfile_hashes.insert(vault_path.clone(), hash);
         let _ = crate::config::save(&config);
     }
 

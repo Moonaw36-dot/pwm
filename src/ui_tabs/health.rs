@@ -62,7 +62,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 checked_any = true;
                 match haveibeenpwned(password) {
                     Ok(result) => { state.hibp_cache.insert(pw_hash, result); }
-                    Err(e) => { log::error!("HIBP error for {}: {e}", entry.label); }
+                    Err(e) => {
+                        state.custom_error_message = Some(format!("Failed to check HIBP for {}: {e}", entry.label));
+                        log::error!("HIBP error for {}: {e}", entry.label);
+                    }
                 }
             }
             if state.hibp_cache.get(&pw_hash) == Some(&true) {
