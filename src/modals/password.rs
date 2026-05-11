@@ -9,6 +9,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.checkbox("Secure notes", &mut state.form.is_secure_note);
 
+
     ui.input_text("Label##add", &mut state.form.label).build();
     ui.input_text("Tag##add", &mut state.form.tag).build();
     ui.input_text("URL / Website##add", &mut state.form.url).build();
@@ -42,7 +43,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
         ui.input_text("TOTP##add", &mut state.form.totp).build();
     }
 
-    ui.input_text("Notes##add", &mut state.form.notes).build();
+
     ui.separator();
 
 

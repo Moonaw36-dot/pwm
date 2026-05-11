@@ -36,9 +36,10 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
 
 
             if entry.is_secure_note {
+                let masked = "*".repeat(entry.notes.len().min(64));
                 ui.text(format!("{}[{}] | {}", entry.tags.as_deref()
                     .map(|t| format!("[{}] ", t.join(", ")))
-                    .unwrap_or_default(), entry.label, entry.notes));
+                    .unwrap_or_default(), entry.label, masked));
 
                 if ui.is_item_clicked() {
                     pending_copy = Some((entry.notes.clone(), "note"));

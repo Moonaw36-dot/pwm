@@ -1,7 +1,7 @@
 use crate::models::AppState;
 use crate::strength::{haveibeenpwned, manual_strength};
 
-fn mask_password(s: &str) -> String {
+pub fn mask_password(s: &str) -> String {
     if s.len() <= 4 {
         return "*".repeat(s.len());
     }
