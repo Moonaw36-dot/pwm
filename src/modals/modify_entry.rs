@@ -72,7 +72,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
         && let Some(idx) = state.edit_index
         && let Some(store) = &mut state.vault.store
     {
-        state.hibp_cache.remove(store.entries[idx].password.as_str());
+        state.hibp_cache.remove(&crate::app::hash_password(store.entries[idx].password.as_str()));
         store.entries[idx] = PasswordEntry {
             label: state.form.label.clone(),
             username: state.form.username.clone(),

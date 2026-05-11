@@ -16,6 +16,7 @@ impl AppState {
                 lock_timeout_secs: crate::config::load().lock_timeout_secs,
                 keyfile: None,
                 keyfile_hash: None,
+                keyfile_bytes: None,
             },
             form: crate::models::EntryForm {
                 label: String::with_capacity(256),
@@ -92,6 +93,9 @@ impl AppState {
         self.vault.file_path = None;
         self.vault.file_name.clear();
         self.vault.encryption_key = None;
+        self.vault.keyfile = None;
+        self.vault.keyfile_hash = None;
+        self.vault.keyfile_bytes = None;
     }
 
     pub fn clear_inputs(&mut self) {
@@ -133,6 +137,13 @@ impl AppState {
             self.custom_error_message = Some(e);
         }
     }
+}
+
+pub fn hash_password(password: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    password.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]

@@ -38,6 +38,7 @@ pub struct Vault {
     pub lock_timeout_secs: u64,
     pub keyfile: Option<PathBuf>,
     pub keyfile_hash: Option<[u8; 32]>,
+    pub keyfile_bytes: Option<Zeroizing<Vec<u8>>>,
 }
 
 pub struct EntryForm {
@@ -104,7 +105,7 @@ pub struct AppState {
     pub custom_error_message: Option<String>,
     pub custom_success_message: Option<String>,
     pub strength_cache: Option<(Zeroizing<String>, StrengthResult)>,
-    pub hibp_cache: std::collections::HashMap<String, bool>,
+    pub hibp_cache: std::collections::HashMap<u64, bool>,
     pub pending_exit: bool,
 }
 

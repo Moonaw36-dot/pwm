@@ -70,17 +70,14 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                 }
             }
 
-            if let Some(totp) = &entry.totp_cache {
-                if let Ok(code) = totp.generate_current() {
+            if let Some(totp) = &entry.totp_cache && let Ok(code) = totp.generate_current() {
                     totp_code = Some(code);
-
                     use std::time::{SystemTime, UNIX_EPOCH};
                     if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
                         let step = 30;
                         let ttl = step - (now.as_secs() % step);
                         totp_timeout = Some(ttl.to_string());
                     }
-                }
             }
 
             let url_clicked = std::cell::Cell::new(false);

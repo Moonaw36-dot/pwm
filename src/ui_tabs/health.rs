@@ -36,11 +36,13 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         }
 
         use std::collections::HashMap;
-        let mut seen: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut seen: HashMap<u64, Vec<&str>> = HashMap::new();
 
         for entry in &store.entries {
-            seen.entry(entry.password.as_str()).or_default().push(entry.username.as_str());
+            let hash = crate::app::hash_password(entry.password.as_str());
+            seen.entry(hash).or_default().push(entry.username.as_str());
         }
+
 
         let reused_groups: Vec<_> = seen.values().filter(|labels| labels.len() > 1).collect();
         if !reused_groups.is_empty() {
@@ -55,14 +57,15 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut checked_any = false;
         for (i, entry) in store.entries.iter().enumerate() {
             let password: &str = &entry.password;
-            if !checked_any && !state.hibp_cache.contains_key(password) {
+            let pw_hash = crate::app::hash_password(password);
+            if !checked_any && !state.hibp_cache.contains_key(&pw_hash) {
                 checked_any = true;
                 match haveibeenpwned(password) {
-                    Ok(result) => { state.hibp_cache.insert(password.to_string(), result); }
+                    Ok(result) => { state.hibp_cache.insert(pw_hash, result); }
                     Err(e) => { log::error!("HIBP error for {}: {e}", entry.label); }
                 }
             }
-            if state.hibp_cache.get(password) == Some(&true) {
+            if state.hibp_cache.get(&pw_hash) == Some(&true) {
                 pwned_indices.push(i);
             }
         }

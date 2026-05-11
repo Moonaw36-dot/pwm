@@ -7,7 +7,7 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Are you sure you want to delete the password?");
     if ui.button("Yes"){
         if let (Some(idx), Some(store)) = (state.delete_idx, &mut state.vault.store) {
-            state.hibp_cache.remove(store.entries[idx].password.as_str());
+            state.hibp_cache.remove(&crate::app::hash_password(store.entries[idx].password.as_str()));
             store.entries.remove(idx);
         }
         state.save();

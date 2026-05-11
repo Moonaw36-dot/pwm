@@ -122,21 +122,30 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
     writer.flush().map_err(|e| e.to_string())
 }
 
-fn derive_key(password: &str, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, String> {
-    derive_key_params(password, salt, 65536, 3)
+fn derive_key(password: &str, salt: &[u8; 16], keyfile_bytes: Option<&[u8]>) -> Result<Zeroizing<[u8; 32]>, String> {
+    derive_key_params(password, salt, 65536, 3, keyfile_bytes)
 }
 
-fn derive_key_legacy(password: &str, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, String> {
-    derive_key_params(password, salt, 19456, 2)
+fn derive_key_legacy(password: &str, salt: &[u8; 16], keyfile_bytes: Option<&[u8]>) -> Result<Zeroizing<[u8; 32]>, String> {
+    derive_key_params(password, salt, 19456, 2, keyfile_bytes)
 }
 
-fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32) -> Result<Zeroizing<[u8; 32]>, String> {
+fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32, keyfile_bytes: Option<&[u8]>) -> Result<Zeroizing<[u8; 32]>, String> {
     let mut key = Zeroizing::new([0u8; 32]);
     let params = argon2::Params::new(m_cost, t_cost, 1, Some(32))
         .map_err(|e| format!("Argon2 params: {e}"))?;
     Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
         .hash_password_into(password.as_bytes(), salt, &mut *key)
         .map_err(|e| format!("Key derivation failed: {e}"))?;
+
+    if let Some(kf) = keyfile_bytes {
+        let mut combined = Zeroizing::new(Vec::with_capacity(32 + kf.len()));
+        let key_ref: &[u8; 32] = &*key;
+        combined.extend_from_slice(key_ref);
+        combined.extend_from_slice(kf);
+        key.copy_from_slice(&Sha256::digest(&*combined));
+    }
+
     Ok(key)
 }
 
@@ -169,7 +178,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     let mut salt = [0u8; SALT_LEN];
     rand::rng().fill_bytes(&mut salt);
 
-    let key = derive_key(&state.master_input, &salt)?;
+    let key = derive_key(&state.master_input, &salt, state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice()))?;
     let filedata = encrypt_store(&empty_store, &key, &salt)?;
     std::fs::write(&path, filedata).map_err(|e| e.to_string())?;
 
@@ -196,6 +205,7 @@ pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
     }
 
     state.vault.keyfile = Some(path);
+    state.vault.keyfile_bytes = Some(bytes);
     Ok(())
 }
 
@@ -221,11 +231,31 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
     std::fs::write(&path, *key).map_err(|e| e.to_string())?;
 
     state.vault.keyfile_hash = Some(hash);
-    state.vault.keyfile = Some(path);
+    state.vault.keyfile = Some(path.clone());
+    state.vault.keyfile_bytes = Some(Zeroizing::new(key.to_vec()));
+
+    // Re-encrypt vault with combined key so the keyfile actually protects it
+    if let (Some(enc_key), Some(store)) = (state.vault.encryption_key.take(), state.vault.store.take()) {
+        let mut combined = Zeroizing::new(Vec::with_capacity(32 + 32));
+        let enc_arr: &[u8; 32] = &enc_key;
+        combined.extend_from_slice(enc_arr);
+        combined.extend_from_slice(&*key);
+        let digest = Sha256::digest(&*combined);
+        let mut new_key = Zeroizing::new([0u8; 32]);
+        new_key.copy_from_slice(&digest);
+
+        if let Err(e) = save_store(&state.vault.file_path, &store, &new_key) {
+            state.vault.encryption_key = Some(enc_key);
+            state.vault.store = Some(store);
+            return Err(e);
+        }
+        state.vault.encryption_key = Some(new_key);
+        state.vault.store = Some(store);
+    }
 
     if let Some(vault_path) = &state.vault.file_path {
         let mut config = crate::config::load();
-        config.keyfile_hashes.insert(vault_path.clone(), hash);
+        config.keyfile_hashes.insert(vault_path.clone(), state.vault.keyfile_hash.unwrap());
         let _ = crate::config::save(&config);
     }
 
@@ -262,7 +292,7 @@ mod tests {
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
 
-        let key = derive_key_params(password, &salt, 65536, 3).unwrap();
+        let key = derive_key_params(password, &salt, 65536, 3, None).unwrap();
         let encrypted = encrypt_store(&store, &key, &salt).unwrap();
 
         assert!(encrypted.len() > HEADER_LEN);
@@ -271,7 +301,7 @@ mod tests {
         let nonce: [u8; 12] = encrypted[SALT_LEN..HEADER_LEN].try_into().unwrap();
         let ciphertext = &encrypted[HEADER_LEN..];
 
-        let (decrypted_store, _) = try_decrypt(password, &salt, &nonce, ciphertext, false).unwrap();
+        let (decrypted_store, _) = try_decrypt(password, &salt, &nonce, ciphertext, false, None).unwrap();
 
         assert_eq!(decrypted_store.entries.len(), 2);
         assert_eq!(decrypted_store.entries[0].label, "test");
@@ -287,13 +317,13 @@ mod tests {
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
 
-        let key = derive_key_params("correct", &salt, 65536, 3).unwrap();
+        let key = derive_key_params("correct", &salt, 65536, 3, None).unwrap();
         let encrypted = encrypt_store(&store, &key, &salt).unwrap();
 
         let nonce: [u8; 12] = encrypted[SALT_LEN..HEADER_LEN].try_into().unwrap();
         let ciphertext = &encrypted[HEADER_LEN..];
 
-        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, false).is_none());
+        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, false, None).is_none());
     }
 
     #[test]
@@ -308,7 +338,7 @@ mod tests {
 
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
-        let legacy_key = derive_key_params("mypass", &salt, 19456, 2).unwrap();
+        let legacy_key = derive_key_params("mypass", &salt, 19456, 2, None).unwrap();
         let encrypted = encrypt_store(&store, &legacy_key, &salt).unwrap();
 
         let (decrypted, new_key) = load_store_for_test(&encrypted, "mypass").unwrap();
@@ -321,13 +351,13 @@ mod tests {
         let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
         let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN].try_into().ok()?;
         let ct = &data[HEADER_LEN..];
-        try_decrypt(password, &salt, &nonce, ct, false)
-            .or_else(|| try_decrypt(password, &salt, &nonce, ct, true))
+        try_decrypt(password, &salt, &nonce, ct, false, None)
+            .or_else(|| try_decrypt(password, &salt, &nonce, ct, true, None))
     }
 }
 
-fn try_decrypt(password: &str, salt: &[u8; 16], nonce: &[u8; 12], ciphertext: &[u8], legacy: bool) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-    let key = if legacy { derive_key_legacy(password, salt) } else { derive_key(password, salt) }.ok()?;
+fn try_decrypt(password: &str, salt: &[u8; 16], nonce: &[u8; 12], ciphertext: &[u8], legacy: bool, keyfile_bytes: Option<&[u8]>) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
+    let key = if legacy { derive_key_legacy(password, salt, keyfile_bytes) } else { derive_key(password, salt, keyfile_bytes) }.ok()?;
     let cipher = Aes256Gcm::new((&*key).into());
     let plaintext = cipher.decrypt(nonce.into(), ciphertext).ok()?;
     let mut json = String::from_utf8(plaintext).ok()?;
@@ -336,7 +366,7 @@ fn try_decrypt(password: &str, salt: &[u8; 16], nonce: &[u8; 12], ciphertext: &[
     Some((store, key))
 }
 
-pub fn load_store(path: &PathBuf, password: &str) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
+pub fn load_store(path: &PathBuf, password: &str, keyfile_bytes: Option<&[u8]>) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
     let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
     if data.len() < HEADER_LEN + 1 {
         return Err("File is too short to be a valid vault".to_string());
@@ -348,11 +378,11 @@ pub fn load_store(path: &PathBuf, password: &str) -> Result<(PasswordList, Zeroi
         .map_err(|_| "Invalid nonce".to_string())?;
     let ciphertext = &data[HEADER_LEN..];
 
-    if let Some(result) = try_decrypt(password, &salt, &nonce_bytes, ciphertext, false) {
+    if let Some(result) = try_decrypt(password, &salt, &nonce_bytes, ciphertext, false, keyfile_bytes) {
         return Ok(result);
     }
 
-    if let Some(result) = try_decrypt(password, &salt, &nonce_bytes, ciphertext, true) {
+    if let Some(result) = try_decrypt(password, &salt, &nonce_bytes, ciphertext, true, keyfile_bytes) {
         return Ok(result);
     }
 

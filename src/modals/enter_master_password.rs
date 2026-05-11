@@ -55,7 +55,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
         } else if state.vault.keyfile_hash.is_some() && state.vault.keyfile.is_none() {
             state.custom_error_message = Some("Please select your keyfile before unlocking.".to_string());
         } else if let Some(path) = &state.vault.file_path {
-            match load_store(path, &state.master_input) {
+            match load_store(path, &state.master_input, state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice())) {
                 Ok((store, key)) => {
                     state.vault.store = Some(store);
                     state.vault.encryption_key = Some(key);
