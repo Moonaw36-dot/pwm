@@ -30,13 +30,9 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_GENERATOR, 0.0]);
 
     let mut mode_idx = if state.generator.mode == GenMode::Passphrase { 1i32 } else { 0i32 };
-    {
-        let _col1 = ui.push_style_color(imgui::StyleColor::CheckMark, [0.75, 0.75, 0.75, 1.0]);
-        let _col2 = ui.push_style_color(imgui::StyleColor::FrameBgActive, [0.30, 0.30, 0.30, 1.0]);
-        ui.radio_button("Random password##mode", &mut mode_idx, 0);
-        ui.same_line();
-        ui.radio_button("Passphrase##mode", &mut mode_idx, 1);
-    }
+    ui.radio_button("Random password##mode", &mut mode_idx, 0);
+    ui.same_line();
+    ui.radio_button("Passphrase##mode", &mut mode_idx, 1);
     state.generator.mode = if mode_idx == 1 { GenMode::Passphrase } else { GenMode::Password };
 
     ui.separator();
