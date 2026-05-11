@@ -1,0 +1,38 @@
+use crate::app::AppState;
+use crate::theme;
+
+pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
+    ui.dummy([theme::MODAL_WIDTH_SETTINGS, 0.0]);
+
+    ui.slider("Auto-lock timeout (minutes)", 0, 120, &mut state.settings_timeout_mins);
+    if state.settings_timeout_mins == 0 {
+        ui.text_disabled("Auto-lock is disabled.");
+    } else {
+        ui.text_disabled(format!(
+            "Vault locks after {} minute{}.",
+            state.settings_timeout_mins,
+            if state.settings_timeout_mins == 1 { "" } else { "s" }
+        ));
+    }
+
+    ui.separator();
+
+    if ui.button("Save") {
+        state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
+
+        let mut config = crate::config::load();
+        config.lock_timeout_secs = state.vault.lock_timeout_secs;
+
+        if let Err(e) = crate::config::save(&config) {
+            state.custom_error_message = Some(e);
+        }
+
+
+        ui.close_current_popup();
+    }
+
+    ui.same_line();
+    if ui.button("Cancel##settings") {
+        ui.close_current_popup();
+    }
+}
