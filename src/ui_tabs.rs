@@ -257,8 +257,8 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut weak_titles: Vec<String> = Vec::new();
 
         for entry in &store.entries {
-            let (score, _label, _) = manual_strength(&entry.password);
-            if score < 3 {
+            let (score, _label, _) = manual_strength(entry.password.as_str());
+            if score < 2 {
                 weak_titles.push(format!("{} - {}", entry.label, mask_password(&entry.password)));
             }
         }
@@ -325,7 +325,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
             ui.separator();
         }
 
-        let thirty_days = 30 * 24 * 60 * 60;
+        const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
 
         let mut old_titles: Vec<String> = Vec::new();
@@ -333,7 +333,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         for entry in &store.entries {
             if let Some(created_at) = entry.created_at
                 && now > created_at
-                && now - created_at > thirty_days
+                && now - created_at > THIRTY_DAYS
             {
                 old_titles.push(format!("{} - {} is old! You should update it!", entry.label, mask_password(&entry.password)));
             }

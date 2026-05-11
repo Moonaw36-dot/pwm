@@ -140,7 +140,7 @@ fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32) 
 }
 
 fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Vec<u8>, String> {
-    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    let mut json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?.zeroize());
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher.encrypt(&nonce, json.as_bytes()).map_err(|e| e.to_string())?;
@@ -154,10 +154,15 @@ fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Ve
 
 pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> {
     let Some(dir) = rfd::FileDialog::new().set_directory(".").pick_folder() else {
-        return Ok(());
+        return Err("No file selected".parse().unwrap());
     };
 
-    let path = dir.join(format!("{file_name}.aegis"));
+    let path: PathBuf = if file_name.ends_with(".aegis") {
+        dir.join(file_name)
+    } else {
+        dir.join(format!("{file_name}.aegis"))
+    };
+
     let empty_store = PasswordList { entries: Vec::new() };
 
     let mut salt = [0u8; SALT_LEN];
@@ -180,7 +185,7 @@ pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
         .pick_file()
         .ok_or("No file selected".to_string())?;
 
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = Zeroizing::new(std::fs::read(&path).map_err(|e| e.to_string())?);
     let hash: [u8; 32] = Sha256::digest(&bytes).into();
 
 

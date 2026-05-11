@@ -51,13 +51,13 @@ pub struct EntryForm {
 
 pub struct Generator {
     pub mode: GenMode,
-    pub length: i32,
+    pub length: u32,
     pub uppercase: bool,
     pub lowercase: bool,
     pub numbers: bool,
     pub special: bool,
     pub ambiguous: bool,
-    pub word_count: i32,
+    pub word_count: u32,
     pub separator: String,
 }
 
@@ -94,7 +94,7 @@ pub struct AppState {
     pub search: String,
     pub filename_input: String,
     pub master_input: Zeroizing<String>,
-    pub settings_timeout_mins: i32,
+    pub settings_timeout_mins: u32,
     pub edit_index: Option<usize>,
     pub delete_idx: Option<usize>,
     pub custom_error_message: Option<String>,

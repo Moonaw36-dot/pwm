@@ -370,7 +370,12 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Name", &mut state.filename_input).build();
 
     if ui.button("OK") {
-        state.filename_input = state.filename_input.trim().to_string();
+        state.filename_input = if state.filename_input.is_empty() {
+            return
+        } else {
+            state.filename_input.trim().to_string()
+        };
+
         state.modals.master_is_create = true;
         state.modals.master = true;
         ui.close_current_popup();

@@ -19,6 +19,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         && state.vault.last_activity.elapsed().as_secs() >= state.vault.lock_timeout_secs
     {
         state.vault.store = None;
+        state.clear_inputs();
         state.vault.encryption_key = None;
         state.modals.master = true;
         state.vault.last_activity = std::time::Instant::now();
@@ -67,7 +68,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     }
                     ui.separator();
                     if ui.menu_item("Settings") {
-                        state.settings_timeout_mins = (state.vault.lock_timeout_secs / 60) as i32;
+                        state.settings_timeout_mins = (state.vault.lock_timeout_secs / 60) as u32;
                         state.modals.settings = true;
                     }
                 });
