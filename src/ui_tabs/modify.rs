@@ -25,6 +25,7 @@ pub fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     {
         let entry = &store.entries[idx];
         state.form.label = entry.label.clone();
+        state.form.is_secure_note = entry.is_secure_note;
         state.form.username = entry.username.clone();
         state.form.password = entry.password.clone();
         state.form.notes = entry.notes.clone();
