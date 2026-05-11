@@ -21,6 +21,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut weak_titles: Vec<String> = Vec::new();
 
         for entry in &store.entries {
+            if entry.is_secure_note {
+                continue
+            }
+
             let (score, _label, _) = manual_strength(entry.password.as_str());
             if score < 2 {
                 weak_titles.push(format!("{} - {}", entry.label, mask_password(&entry.password)));
@@ -56,6 +60,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut pwned_indices: Vec<usize> = Vec::new();
         let mut checked_any = false;
         for (i, entry) in store.entries.iter().enumerate() {
+            if entry.is_secure_note {
+                continue;
+            }
+
             let password: &str = &entry.password;
             let pw_hash = crate::app::hash_password(password);
             if !checked_any && !state.hibp_cache.contains_key(&pw_hash) {
