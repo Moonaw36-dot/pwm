@@ -80,6 +80,7 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
             custom_fields: Vec::new(),
             is_secure_note: false,
             created_at: None,
+            totp_cache: None,
         });
     }
 

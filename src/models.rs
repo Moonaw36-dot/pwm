@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::strength::GenMode;
 use arboard::Clipboard;
 use crate::strength::StrengthResult;
+use totp_rs::TOTP;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -19,6 +20,8 @@ pub struct PasswordEntry {
     pub custom_fields: Vec<(String, String)>,
     pub is_secure_note: bool,
     pub created_at: Option<u64>,
+    #[serde(skip)]
+    pub totp_cache: Option<TOTP>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,6 +125,7 @@ mod tests {
             custom_fields: vec![("key".into(), "value".into())],
             is_secure_note: false,
             created_at: Some(1234567890),
+            totp_cache: None,
         };
 
         let json = serde_json::to_string(&entry).unwrap();

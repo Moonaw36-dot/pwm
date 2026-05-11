@@ -87,6 +87,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
                 .collect(),
             is_secure_note: state.form.is_secure_note,
             created_at: store.entries[idx].created_at,
+            totp_cache: None,
             };        state.save();
         state.edit_index = None;
         ui.close_current_popup();

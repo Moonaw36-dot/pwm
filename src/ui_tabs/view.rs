@@ -22,10 +22,10 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     let search_query = state.search.to_lowercase();
     let mut pending_copy: Option<(String, &'static str)> = None;
 
-    if let Some(store) = &state.vault.store {
+    if let Some(store) = &mut state.vault.store {
         ui.text(format!("Entry count: {}", store.entries.len()));
 
-        for entry in &store.entries {
+        for entry in &mut store.entries {
             if !search_query.is_empty()
                 && !entry.label.to_lowercase().contains(&search_query)
                 && !entry.username.to_lowercase().contains(&search_query)
@@ -58,28 +58,28 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
 
             let mut totp_code: Option<String> = None;
             let mut totp_timeout: Option<String> = None;
-            if let Some(secret) = &entry.totp_secret {
-                let clean_secret = secret.replace(" ", "").to_uppercase();
+            if entry.totp_secret.is_some() && entry.totp_cache.is_none() {
+                let clean_secret = entry.totp_secret.as_ref().unwrap().replace(" ", "").to_uppercase();
                 if let Some(bytes) = base32::decode(base32::Alphabet::RFC4648 { padding: false }, &clean_secret) {
-
                     match TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string()) {
-                        Ok(totp) => {
-                            if let Ok(code) = totp.generate_current() {
-                                totp_code = Some(code);
-
-
-                                use std::time::{SystemTime, UNIX_EPOCH};
-                                if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                                    let step = 30;
-                                    let ttl = step - (now.as_secs() % step);
-                                    totp_timeout = Some(ttl.to_string());
-                                }
-                            }
-                        }
+                        Ok(totp) => entry.totp_cache = Some(totp),
                         Err(e) => log::error!("TOTP error for {}: {:?}", entry.label, e),
                     }
                 } else {
                     log::error!("Failed to decode Base32 secret for {}", entry.label);
+                }
+            }
+
+            if let Some(totp) = &entry.totp_cache {
+                if let Ok(code) = totp.generate_current() {
+                    totp_code = Some(code);
+
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
+                        let step = 30;
+                        let ttl = step - (now.as_secs() % step);
+                        totp_timeout = Some(ttl.to_string());
+                    }
                 }
             }
 

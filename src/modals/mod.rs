@@ -75,6 +75,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
             .collect(),
         is_secure_note: state.form.is_secure_note,
         created_at: Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()),
+        totp_cache: None,
     };
 
     if let Some(store) = &mut state.vault.store {
