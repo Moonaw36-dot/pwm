@@ -226,6 +226,100 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::PasswordEntry;
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let store = PasswordList {
+            entries: vec![
+                PasswordEntry {
+                    label: "test".into(),
+                    username: "user".into(),
+                    password: Zeroizing::new("secret123".into()),
+                    url: "https://example.com".into(),
+                    notes: "my note".into(),
+                    totp_secret: Some("JBSWY3DPEHPK3PXP".into()),
+                    tags: Some(vec!["work".into(), "dev".into()]),
+                    ..Default::default()
+                },
+                PasswordEntry {
+                    label: "empty".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        let password = "master_password";
+        let mut salt = [0u8; 16];
+        rand::rng().fill_bytes(&mut salt);
+
+        let key = derive_key_params(password, &salt, 65536, 3).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt).unwrap();
+
+        assert!(encrypted.len() > HEADER_LEN);
+        assert_eq!(&encrypted[..SALT_LEN], &salt);
+
+        let nonce: [u8; 12] = encrypted[SALT_LEN..HEADER_LEN].try_into().unwrap();
+        let ciphertext = &encrypted[HEADER_LEN..];
+
+        let (decrypted_store, _) = try_decrypt(password, &salt, &nonce, ciphertext, false).unwrap();
+
+        assert_eq!(decrypted_store.entries.len(), 2);
+        assert_eq!(decrypted_store.entries[0].label, "test");
+        assert_eq!(decrypted_store.entries[0].password.as_str(), "secret123");
+        assert_eq!(decrypted_store.entries[0].totp_secret.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+        assert_eq!(decrypted_store.entries[1].label, "empty");
+        assert!(decrypted_store.entries[1].password.is_empty());
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_wrong_key_fails() {
+        let store = PasswordList { entries: vec![] };
+        let mut salt = [0u8; 16];
+        rand::rng().fill_bytes(&mut salt);
+
+        let key = derive_key_params("correct", &salt, 65536, 3).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt).unwrap();
+
+        let nonce: [u8; 12] = encrypted[SALT_LEN..HEADER_LEN].try_into().unwrap();
+        let ciphertext = &encrypted[HEADER_LEN..];
+
+        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, false).is_none());
+    }
+
+    #[test]
+    fn test_legacy_fallback() {
+        let store = PasswordList {
+            entries: vec![PasswordEntry {
+                label: "legacy".into(),
+                password: Zeroizing::new("p4ss".into()),
+                ..Default::default()
+            }],
+        };
+
+        let mut salt = [0u8; 16];
+        rand::rng().fill_bytes(&mut salt);
+        let legacy_key = derive_key_params("mypass", &salt, 19456, 2).unwrap();
+        let encrypted = encrypt_store(&store, &legacy_key, &salt).unwrap();
+
+        let (decrypted, new_key) = load_store_for_test(&encrypted, "mypass").unwrap();
+        assert_eq!(decrypted.entries[0].label, "legacy");
+        assert_eq!(new_key, legacy_key);
+    }
+
+    fn load_store_for_test(data: &[u8], password: &str) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
+        if data.len() < HEADER_LEN + 1 { return None; }
+        let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
+        let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN].try_into().ok()?;
+        let ct = &data[HEADER_LEN..];
+        try_decrypt(password, &salt, &nonce, ct, false)
+            .or_else(|| try_decrypt(password, &salt, &nonce, ct, true))
+    }
+}
+
 fn try_decrypt(password: &str, salt: &[u8; 16], nonce: &[u8; 12], ciphertext: &[u8], legacy: bool) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
     let key = if legacy { derive_key_legacy(password, salt) } else { derive_key(password, salt) }.ok()?;
     let cipher = Aes256Gcm::new((&*key).into());

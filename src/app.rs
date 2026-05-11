@@ -133,3 +133,58 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_cached_strength_cache_hit() {
+        let mut state = AppState::new();
+        let result = state.cached_strength("Abcdefg1!hijklmn");
+        let cached = state.strength_cache.as_ref().unwrap();
+        assert_eq!(cached.0.as_str(), "Abcdefg1!hijklmn");
+        assert_eq!(cached.1, result);
+    }
+
+    #[test]
+    fn test_cached_strength_cache_miss_updates() {
+        let mut state = AppState::new();
+        let r1 = state.cached_strength("weak");
+        let r2 = state.cached_strength("Abcdefg1!hijklmn");
+        assert_ne!(r1, r2);
+        assert_eq!(state.strength_cache.as_ref().unwrap().0.as_str(), "Abcdefg1!hijklmn");
+    }
+
+    #[test]
+    fn test_clear_inputs_zeroizes_password() {
+        let mut state = AppState::new();
+        state.form.password = Zeroizing::new("secret".into());
+        state.form.label = "mylabel".into();
+        state.form.custom_fields.push(("k".into(), "v".into()));
+
+        state.clear_inputs();
+
+        assert!(state.form.password.is_empty());
+        assert!(state.form.label.is_empty());
+        assert!(state.form.custom_fields.is_empty());
+        assert!(!state.form.is_secure_note);
+    }
+
+    #[test]
+    fn test_close_file_clears_store() {
+        let mut state = AppState::new();
+        state.vault.store = Some(PasswordList { entries: vec![] });
+        state.vault.file_path = Some(PathBuf::from("/tmp/test.aegis"));
+        state.vault.file_name = "test".into();
+        state.vault.encryption_key = Some(Zeroizing::new([1u8; 32]));
+
+        state.close_file();
+
+        assert!(state.vault.store.is_none());
+        assert!(state.vault.file_path.is_none());
+        assert!(state.vault.file_name.is_empty());
+        assert!(state.vault.encryption_key.is_none());
+    }
+}

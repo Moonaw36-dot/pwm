@@ -103,3 +103,67 @@ pub struct AppState {
     pub hibp_cache: std::collections::HashMap<String, bool>,
     pub pending_exit: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_password_entry_serde_roundtrip() {
+        let entry = PasswordEntry {
+            label: "example".into(),
+            username: "alice".into(),
+            password: Zeroizing::new("hunter2".into()),
+            notes: "my note".into(),
+            totp_secret: Some("SECRET".into()),
+            tags: Some(vec!["tag1".into(), "tag2".into()]),
+            url: "https://example.com".into(),
+            custom_fields: vec![("key".into(), "value".into())],
+            is_secure_note: false,
+            created_at: Some(1234567890),
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: PasswordEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.label, "example");
+        assert_eq!(deserialized.password.as_str(), "hunter2");
+        assert_eq!(deserialized.totp_secret.as_deref(), Some("SECRET"));
+        let tags = deserialized.tags.unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0], "tag1");
+        assert_eq!(tags[1], "tag2");
+        assert_eq!(deserialized.custom_fields[0].0, "key");
+        assert_eq!(deserialized.created_at, Some(1234567890));
+    }
+
+    #[test]
+    fn test_password_entry_default() {
+        let entry = PasswordEntry::default();
+        assert!(entry.label.is_empty());
+        assert!(entry.password.is_empty());
+        assert!(entry.custom_fields.is_empty());
+        assert!(!entry.is_secure_note);
+    }
+
+    #[test]
+    fn test_password_list_serde() {
+        let list = PasswordList {
+            entries: vec![
+                PasswordEntry {
+                    label: "a".into(),
+                    ..Default::default()
+                },
+                PasswordEntry {
+                    label: "b".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&list).unwrap();
+        let deserialized: PasswordList = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.entries.len(), 2);
+        assert_eq!(deserialized.entries[0].label, "a");
+    }
+}

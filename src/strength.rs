@@ -161,3 +161,200 @@ pub fn manual_strength(password: &str) -> StrengthResult {
     if pool == 0.0 { pool = 26.0; }
     bits_to_strength(password.len() as f64 * pool.log2())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- verify_password ----
+
+    #[test]
+    fn test_verify_short_password() {
+        let issues = verify_password("abc");
+        assert!(issues.contains(&PasswordSafety::TooShort));
+    }
+
+    #[test]
+    fn test_verify_no_special() {
+        let issues = verify_password("Abcdefg1hijklmn");
+        assert!(issues.contains(&PasswordSafety::MissingSpecialChars));
+        assert!(!issues.contains(&PasswordSafety::TooShort));
+    }
+
+    #[test]
+    fn test_verify_no_digits() {
+        let issues = verify_password("Abcdefg!hijklmn");
+        assert!(issues.contains(&PasswordSafety::MissingNumbers));
+    }
+
+    #[test]
+    fn test_verify_no_lowercase() {
+        let issues = verify_password("ABCDEFG!HIJKLMN1");
+        assert!(issues.contains(&PasswordSafety::NoLowerCase));
+    }
+
+    #[test]
+    fn test_verify_no_uppercase_plain_string() {
+        // Must not look like a passphrase (need >=2 all-lowercase alpha words)
+        let issues = verify_password("abcdefghijklmnop!");
+        assert!(issues.contains(&PasswordSafety::NoUpperCase));
+    }
+
+    #[test]
+    fn test_verify_valid_password() {
+        let issues = verify_password("Abcdefg1!hijklmn");
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_verify_passphrase_too_few_words() {
+        // 2 lowercase words triggers passphrase mode, but < 4 words = TooFewWords
+        let issues = verify_password("foo bar");
+        assert!(issues.contains(&PasswordSafety::TooFewWords));
+    }
+
+    #[test]
+    fn test_verify_valid_passphrase() {
+        let issues = verify_password("correct horse battery staple");
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_verify_mixed_passphrase_with_caps_is_treated_as_password() {
+        let issues = verify_password("Correct horse battery staple");
+        assert!(!issues.contains(&PasswordSafety::TooFewWords));
+    }
+
+    // ---- bits_to_strength ----
+
+    #[test]
+    fn test_bits_very_weak() {
+        assert_eq!(bits_to_strength(0.0).0, 0);
+        assert_eq!(bits_to_strength(29.9).0, 0);
+    }
+
+    #[test]
+    fn test_bits_weak() {
+        assert_eq!(bits_to_strength(30.0).0, 1);
+        assert_eq!(bits_to_strength(49.9).0, 1);
+    }
+
+    #[test]
+    fn test_bits_fair() {
+        assert_eq!(bits_to_strength(50.0).0, 2);
+        assert_eq!(bits_to_strength(65.9).0, 2);
+    }
+
+    #[test]
+    fn test_bits_strong() {
+        assert_eq!(bits_to_strength(66.0).0, 3);
+        assert_eq!(bits_to_strength(94.9).0, 3);
+    }
+
+    #[test]
+    fn test_bits_very_strong() {
+        assert_eq!(bits_to_strength(95.0).0, 4);
+        assert_eq!(bits_to_strength(200.0).0, 4);
+    }
+
+    // ---- manual_strength ----
+
+    #[test]
+    fn test_manual_strength_empty() {
+        let (score, label, _) = manual_strength("");
+        assert_eq!(score, 0);
+        assert_eq!(label, "—");
+    }
+
+    #[test]
+    fn test_manual_strength_passphrase() {
+        let (score, _, _) = manual_strength("correct horse battery staple");
+        // ~52 bits → "Fair" (score 2)
+        assert_eq!(score, 2);
+    }
+
+    #[test]
+    fn test_manual_strength_strong_passphrase() {
+        let (score, _, _) = manual_strength("correct horse battery staple gun pack");
+        // ~77 bits → "Strong" (score 3)
+        assert_eq!(score, 3);
+    }
+
+    #[test]
+    fn test_manual_strength_short_password() {
+        let (score, _, _) = manual_strength("aB1!");
+        assert!(score < 3);
+    }
+
+    // ---- generate_password ----
+
+    #[test]
+    fn test_generate_all_options_off_returns_empty() {
+        let pw = generate_password(16, false, false, false, false, true);
+        assert!(pw.is_empty());
+    }
+
+    #[test]
+    fn test_generate_zero_length() {
+        let pw = generate_password(0, true, true, true, true, true);
+        assert!(pw.is_empty());
+    }
+
+    #[test]
+    fn test_generate_uppercase_only() {
+        let pw = generate_password(100, true, false, false, false, true);
+        assert_eq!(pw.len(), 100);
+        assert!(pw.chars().all(|c| c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn test_generate_lowercase_only() {
+        let pw = generate_password(100, false, true, false, false, true);
+        assert_eq!(pw.len(), 100);
+        assert!(pw.chars().all(|c| c.is_ascii_lowercase()));
+    }
+
+    #[test]
+    fn test_generate_digits_only() {
+        let pw = generate_password(100, false, false, true, false, true);
+        assert_eq!(pw.len(), 100);
+        assert!(pw.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_generate_excludes_ambiguous_chars() {
+        let ambiguous = "0OIl1B8S5Z2";
+        for _ in 0..20 {
+            let pw = generate_password(100, true, true, true, true, false);
+            assert!(pw.chars().all(|c| !ambiguous.contains(c)));
+        }
+    }
+
+    #[test]
+    fn test_generate_correct_length() {
+        for len in [1, 8, 16, 32, 64] {
+            let pw = generate_password(len, true, true, true, true, true);
+            assert_eq!(pw.len(), len);
+        }
+    }
+
+    // ---- generate_passphrase ----
+
+    #[test]
+    fn test_passphrase_correct_word_count() {
+        let pw = generate_passphrase(4, "-");
+        assert_eq!(pw.matches('-').count(), 3);
+    }
+
+    #[test]
+    fn test_passphrase_no_words() {
+        let pw = generate_passphrase(0, "-");
+        assert!(pw.is_empty());
+    }
+
+    #[test]
+    fn test_passphrase_custom_separator() {
+        let pw = generate_passphrase(3, ".");
+        assert_eq!(pw.matches('.').count(), 2);
+    }
+}
