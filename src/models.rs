@@ -63,6 +63,7 @@ pub struct Generator {
 
 pub struct Modals {
     pub add_password: bool,
+    pub close_add_password: bool,
     pub settings: bool,
     pub error_password: bool,
     pub warning_password: bool,

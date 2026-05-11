@@ -133,6 +133,13 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Tag##add", &mut state.form.tag).build();
     ui.input_text("URL / Website##add", &mut state.form.url).build();
 
+    if state.modals.close_add_password {
+        ui.close_current_popup();
+        add_entry_from_inputs(state);
+        state.clear_inputs();
+        state.modals.close_add_password = false;
+    }
+
 
     if state.form.is_secure_note{
         state.form.username.clear();
@@ -318,6 +325,7 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
     if ui.button("Generate a strong password") {
         state.form.password = Zeroizing::new(generate_password(24, true, true, true, true, false));
         ui.close_current_popup();
+        state.modals.close_add_password = true;
     }
 
     ui.same_line();

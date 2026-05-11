@@ -41,6 +41,7 @@ impl AppState {
             },
             modals: crate::models::Modals {
                 add_password: false,
+                close_add_password: false,
                 settings: false,
                 error_password: false,
                 warning_password: false,

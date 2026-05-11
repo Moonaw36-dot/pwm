@@ -140,7 +140,7 @@ fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32) 
 }
 
 fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Vec<u8>, String> {
-    let mut json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?.zeroize());
+    let json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?);
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher.encrypt(&nonce, json.as_bytes()).map_err(|e| e.to_string())?;
