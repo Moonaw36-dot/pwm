@@ -1,5 +1,5 @@
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 use crate::app::{AppState, PasswordEntry};
 use crate::strength::{GenMode, PasswordSafety, StrengthResult, generate_passphrase, generate_password, verify_password};
 use crate::file_ops::{create_file, load_store};
@@ -11,7 +11,7 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Are you sure you want to delete the password?");
     if ui.button("Yes"){
         if let (Some(idx), Some(store)) = (state.delete_idx, &mut state.vault.store) {
-            state.hibp_cache.remove(&store.entries[idx].password);
+            state.hibp_cache.remove(store.entries[idx].password.as_str());
             store.entries.remove(idx);
         }
         state.save();
@@ -65,7 +65,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     if ui.button("Generate##gen") {
-        state.form.password = if state.generator.mode == GenMode::Passphrase {
+        state.form.password = Zeroizing::new(if state.generator.mode == GenMode::Passphrase {
             generate_passphrase(state.generator.word_count as usize, &state.generator.separator)
         } else {
             generate_password(
@@ -76,7 +76,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
                 state.generator.special,
                 state.generator.ambiguous,
             )
-        };
+        });
     }
 
     if state.modals.gen_from_add {
@@ -88,13 +88,15 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
         ui.same_line();
         if ui.button("Cancel##gen") {
-            state.form.password.clear();
+            state.form.password = Zeroizing::new(String::new());
             state.modals.gen_from_add = false;
             ui.close_current_popup();
         }
     } else {
         if ui.button("Copy to clipboard###gen") {
-            crate::clipboard::set_excluded_from_history(&mut state.clipboard.handle, &state.form.password);
+            if let Some(ref mut handle) = state.clipboard.handle {
+                crate::clipboard::set_excluded_from_history(handle, &state.form.password);
+            }
             ui.close_current_popup();
         }
 
@@ -138,7 +140,7 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     if state.form.is_secure_note{
         state.form.username.clear();
-        state.form.password.clear();
+        state.form.password = Zeroizing::new(String::new());
     }
 
     if !state.form.is_secure_note{
@@ -266,13 +268,18 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
             }
         } else if state.vault.keyfile_hash.is_some() && state.vault.keyfile.is_none() {
             state.custom_error_message = Some("Please select your keyfile before unlocking.".to_string());
-        } else if let Some(path) = &state.vault.file_path
-            && let Some((store, key)) = load_store(path, &state.master_input)
-        {
-            state.vault.store = Some(store);
-            state.vault.encryption_key = Some(key);
-            state.master_input.zeroize();
-            ui.close_current_popup();
+        } else if let Some(path) = &state.vault.file_path {
+            match load_store(path, &state.master_input) {
+                Ok((store, key)) => {
+                    state.vault.store = Some(store);
+                    state.vault.encryption_key = Some(key);
+                    state.master_input.zeroize();
+                    ui.close_current_popup();
+                }
+                Err(e) => {
+                    state.custom_error_message = Some(e);
+                }
+            }
         }
     }
 
@@ -313,7 +320,7 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("What do you want to do?");
 
     if ui.button("Generate a strong password") {
-        state.form.password = generate_password(24, true, true, true, true, false);
+        state.form.password = Zeroizing::new(generate_password(24, true, true, true, true, false));
         ui.close_current_popup();
     }
 
@@ -341,7 +348,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
     let entry = PasswordEntry {
         label: std::mem::take(&mut state.form.label),
         username: std::mem::take(&mut state.form.username),
-        password: std::mem::take(&mut state.form.password),
+        password: std::mem::replace(&mut state.form.password, Zeroizing::new(String::new())),
         notes: std::mem::take(&mut state.form.notes),
         url: std::mem::take(&mut state.form.url),
         totp_secret: sanitize_totp(std::mem::take(&mut state.form.totp)),
@@ -428,23 +435,58 @@ pub fn custom_error_modal(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
+pub fn confirm_unsaved_modal(ui: &imgui::Ui, state: &mut AppState) {
+    ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
+    ui.text("You have unsaved changes. What would you like to do?");
+
+    if ui.button("Save and Exit") {
+        state.save();
+        state.pending_exit = false;
+        ui.close_current_popup();
+        std::process::exit(0);
+    }
+
+    ui.same_line();
+    if ui.button("Exit without Saving") {
+        state.pending_exit = false;
+        ui.close_current_popup();
+        std::process::exit(0);
+    }
+
+    ui.same_line();
+    if ui.button("Cancel") {
+        state.pending_exit = false;
+        ui.close_current_popup();
+    }
+}
+
 pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
     ui.text("Modify the fields you want to change:");
     ui.separator();
 
+    ui.checkbox("Secure note", &mut state.form.is_secure_note);
+
     ui.input_text("Label", &mut state.form.label).build();
     ui.input_text("Tag", &mut state.form.tag).build();
     ui.input_text("URL / Website", &mut state.form.url).build();
-    ui.input_text("Username", &mut state.form.username).build();
-    ui.input_text("Password", &mut state.form.password).password(true).build();
 
-    let pw = state.form.password.clone();
-    let strength = state.cached_strength(&pw);
-    if ui.button("Generate password") {
-        state.modals.gen_password = true;
+    if state.form.is_secure_note{
+        state.form.username.clear();
+        state.form.password = Zeroizing::new(String::new());
     }
-    render_strength_bar(ui, strength);
+
+    if !state.form.is_secure_note{
+        ui.input_text("Username", &mut state.form.username).build();
+        ui.input_text("Password", &mut state.form.password).password(true).build();
+
+        let pw = state.form.password.clone();
+        let strength = state.cached_strength(&pw);
+        if ui.button("Generate password") {
+            state.modals.gen_password = true;
+        }
+        render_strength_bar(ui, strength);
+    }
 
     ui.input_text("Notes", &mut state.form.notes).build();
     ui.input_text("TOTP###MODIFY", &mut state.form.totp).build();
@@ -474,7 +516,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
         && let Some(idx) = state.edit_index
         && let Some(store) = &mut state.vault.store
     {
-        state.hibp_cache.remove(&store.entries[idx].password);
+        state.hibp_cache.remove(store.entries[idx].password.as_str());
         store.entries[idx] = PasswordEntry {
             label: state.form.label.clone(),
             username: state.form.username.clone(),

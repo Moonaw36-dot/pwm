@@ -3,7 +3,9 @@ use crate::{ui_tabs, theme};
 
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(clear_at) = state.clipboard.clear_at && std::time::Instant::now() >= clear_at {
-        crate::clipboard::set_excluded_from_history(&mut state.clipboard.handle, "");
+        if let Some(ref mut handle) = state.clipboard.handle {
+            crate::clipboard::set_excluded_from_history(handle, "");
+        }
         state.clipboard.clear_at = None;
     }
 
@@ -135,6 +137,15 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
 
     if let Some(_token) = ui.begin_modal_popup("Confirm Delete") {
         crate::modals::confirm_delete_modal(ui, state);
+    }
+
+    if state.modals.confirm_unsaved {
+        ui.open_popup("Unsaved Changes");
+        state.modals.confirm_unsaved = false;
+    }
+
+    if let Some(_token) = ui.begin_modal_popup("Unsaved Changes") {
+        crate::modals::confirm_unsaved_modal(ui, state);
     }
 
     if state.modals.master {

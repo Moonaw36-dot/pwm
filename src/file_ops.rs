@@ -4,7 +4,7 @@ use argon2::Argon2;
 use aes_gcm::{Aes256Gcm, KeyInit, AeadCore};
 use aes_gcm::aead::{Aead, OsRng};
 use sha2::{Sha256, Digest};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 use crate::app::{AppState, PasswordEntry, PasswordList};
 
 const SALT_LEN: usize = 16;
@@ -13,7 +13,7 @@ const HEADER_LEN: usize = SALT_LEN + NONCE_LEN;
 
 pub fn open_file_dialog() -> Option<(String, PathBuf)> {
     let path = rfd::FileDialog::new()
-        .add_filter("JSON", &["json"])
+        .add_filter("Aegis vault", &["aegis", "json"])
         .add_filter("All Files", &["*"])
         .set_directory(".")
         .pick_file()?;
@@ -72,7 +72,7 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
         entries.push(PasswordEntry {
             label:    get(&record, idx_label),
             username: get(&record, idx_username),
-            password: get(&record, idx_password),
+            password: Zeroizing::new(get(&record, idx_password)),
             url:      get(&record, idx_url),
             notes:    get(&record, idx_notes),
             tags,
@@ -87,6 +87,16 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
 }
 
 pub fn export_csv(store: &PasswordList) -> Result<(), String> {
+    if rfd::MessageDialog::new()
+        .set_title("Export warning")
+        .set_description("Passwords will be exported in plaintext (unencrypted). Continue?")
+        .set_buttons(rfd::MessageButtons::OkCancel)
+        .show()
+        != rfd::MessageDialogResult::Yes
+    {
+        return Ok(());
+    }
+
     let Some(path) = save_csv_dialog() else { return Ok(()) };
 
     let mut writer = csv::Writer::from_path(&path).map_err(|e| e.to_string())?;
@@ -100,7 +110,7 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
         writer.write_record([
             &entry.label,
             &entry.username,
-            &entry.password,
+            entry.password.as_str(),
             &entry.url,
             &entry.notes,
             &tags,
@@ -112,8 +122,18 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
 }
 
 fn derive_key(password: &str, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, String> {
+    derive_key_params(password, salt, 65536, 3)
+}
+
+fn derive_key_legacy(password: &str, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, String> {
+    derive_key_params(password, salt, 19456, 2)
+}
+
+fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32) -> Result<Zeroizing<[u8; 32]>, String> {
     let mut key = Zeroizing::new([0u8; 32]);
-    Argon2::default()
+    let params = argon2::Params::new(m_cost, t_cost, 1, Some(32))
+        .map_err(|e| format!("Argon2 params: {e}"))?;
+    Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
         .hash_password_into(password.as_bytes(), salt, &mut *key)
         .map_err(|e| format!("Key derivation failed: {e}"))?;
     Ok(key)
@@ -137,7 +157,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
         return Ok(());
     };
 
-    let path = dir.join(format!("{file_name}.json"));
+    let path = dir.join(format!("{file_name}.aegis"));
     let empty_store = PasswordList { entries: Vec::new() };
 
     let mut salt = [0u8; SALT_LEN];
@@ -206,24 +226,37 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
-pub fn load_store(path: &PathBuf, password: &str) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-    let data = std::fs::read(path).ok()?;
+fn try_decrypt(password: &str, salt: &[u8; 16], nonce: &[u8; 12], ciphertext: &[u8], legacy: bool) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
+    let key = if legacy { derive_key_legacy(password, salt) } else { derive_key(password, salt) }.ok()?;
+    let cipher = Aes256Gcm::new((&*key).into());
+    let plaintext = cipher.decrypt(nonce.into(), ciphertext).ok()?;
+    let mut json = String::from_utf8(plaintext).ok()?;
+    let store: PasswordList = serde_json::from_str(&json).ok()?;
+    json.zeroize();
+    Some((store, key))
+}
+
+pub fn load_store(path: &PathBuf, password: &str) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
+    let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
     if data.len() < HEADER_LEN + 1 {
-        return None;
+        return Err("File is too short to be a valid vault".to_string());
     }
 
-    let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
-    let nonce_bytes: [u8; 12] = data[SALT_LEN..HEADER_LEN].try_into().ok()?;
+    let salt: [u8; 16] = data[..SALT_LEN].try_into()
+        .map_err(|_| "Invalid salt".to_string())?;
+    let nonce_bytes: [u8; 12] = data[SALT_LEN..HEADER_LEN].try_into()
+        .map_err(|_| "Invalid nonce".to_string())?;
     let ciphertext = &data[HEADER_LEN..];
 
-    let key = derive_key(password, &salt).ok()?;
-    let cipher = Aes256Gcm::new((&*key).into());
-    let plaintext = cipher.decrypt(&nonce_bytes.into(), ciphertext).ok()?;
+    if let Some(result) = try_decrypt(password, &salt, &nonce_bytes, ciphertext, false) {
+        return Ok(result);
+    }
 
-    let json = String::from_utf8(plaintext).ok()?;
-    let store: PasswordList = serde_json::from_str(&json).ok()?;
+    if let Some(result) = try_decrypt(password, &salt, &nonce_bytes, ciphertext, true) {
+        return Ok(result);
+    }
 
-    Some((store, key))
+    Err("Decryption failed: wrong master password or corrupted file".to_string())
 }
 
 pub fn save_store(path: &Option<PathBuf>, store: &PasswordList, key: &[u8; 32]) -> Result<(), String> {
@@ -236,6 +269,8 @@ pub fn save_store(path: &Option<PathBuf>, store: &PasswordList, key: &[u8; 32]) 
     let salt = &existing[..SALT_LEN];
 
     let filedata = encrypt_store(store, key, salt)?;
-    std::fs::write(p, filedata).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, filedata).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, p).map_err(|e| e.to_string())?;
     Ok(())
 }

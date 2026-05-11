@@ -14,12 +14,16 @@ pub fn set_excluded_from_history(clipboard: &mut arboard::Clipboard, text: &str)
     #[cfg(target_os = "windows")]
     {
         if windows_set_clipboard_excluded(text).is_err() {
-            // Fall back to arboard if the raw API call fails
             clipboard.set_text(text).ok();
         }
     }
 
     #[cfg(target_os = "macos")]
+    {
+        clipboard.set_text(text).ok();
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         clipboard.set_text(text).ok();
     }

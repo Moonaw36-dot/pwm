@@ -26,25 +26,31 @@ pub fn apply(style: &mut imgui::Style) {
     style.window_padding = [6.0, 3.0];
 
     let c = &mut style.colors;
-    c[imgui::StyleColor::WindowBg as usize]          = [0.10, 0.10, 0.10, 1.0];
-    c[imgui::StyleColor::ModalWindowDimBg as usize]  = [0.20, 0.20, 0.20, 0.3];
-    c[imgui::StyleColor::TitleBgActive as usize]     = [0.10, 0.10, 0.10, 1.0];
-    c[imgui::StyleColor::FrameBg as usize]           = [0.15, 0.15, 0.15, 1.0];
-    c[imgui::StyleColor::FrameBgHovered as usize]    = [0.20, 0.20, 0.20, 1.0];
-    c[imgui::StyleColor::FrameBgActive as usize]     = [0.25, 0.25, 0.25, 1.0];
-    c[imgui::StyleColor::Button as usize]            = [0.13, 0.13, 0.13, 1.0];
-    c[imgui::StyleColor::ButtonHovered as usize]     = [0.30, 0.30, 0.30, 1.0];
-    c[imgui::StyleColor::ButtonActive as usize]      = [0.60, 0.60, 0.60, 1.0];
-    c[imgui::StyleColor::SliderGrab as usize]        = [0.40, 0.40, 0.40, 1.0];
-    c[imgui::StyleColor::SliderGrabActive as usize]  = [0.60, 0.60, 0.60, 1.0];
-    c[imgui::StyleColor::Tab as usize]               = [0.14, 0.14, 0.14, 1.0];
-    c[imgui::StyleColor::TabActive as usize]         = [0.25, 0.25, 0.25, 1.0];
-    c[imgui::StyleColor::TabHovered as usize]        = [0.20, 0.20, 0.20, 1.0];
-    c[imgui::StyleColor::Border as usize]            = [0.08, 0.08, 0.08, 1.0];
-    c[imgui::StyleColor::Separator as usize]         = [0.18, 0.18, 0.18, 1.0];
-    c[imgui::StyleColor::MenuBarBg as usize]         = [0.12, 0.12, 0.12, 0.8];
-    c[imgui::StyleColor::HeaderHovered as usize]     = [0.18, 0.18, 0.18, 1.0];
-    c[imgui::StyleColor::ResizeGrip as usize]        = [0.12, 0.12, 0.12, 1.0];
-    c[imgui::StyleColor::ResizeGripActive as usize]  = [0.14, 0.14, 0.14, 1.0];
-    c[imgui::StyleColor::ResizeGripHovered as usize] = [0.15, 0.15, 0.15, 1.0];
+    let set = |c: &mut [[f32; 4]], idx: imgui::StyleColor, color: [f32; 4]| {
+        let i = idx as usize;
+        if i < c.len() {
+            c[i] = color;
+        }
+    };
+    set(c, imgui::StyleColor::WindowBg,          [0.10, 0.10, 0.10, 1.0]);
+    set(c, imgui::StyleColor::ModalWindowDimBg,  [0.20, 0.20, 0.20, 0.3]);
+    set(c, imgui::StyleColor::TitleBgActive,     [0.10, 0.10, 0.10, 1.0]);
+    set(c, imgui::StyleColor::FrameBg,           [0.15, 0.15, 0.15, 1.0]);
+    set(c, imgui::StyleColor::FrameBgHovered,    [0.20, 0.20, 0.20, 1.0]);
+    set(c, imgui::StyleColor::FrameBgActive,     [0.25, 0.25, 0.25, 1.0]);
+    set(c, imgui::StyleColor::Button,            [0.13, 0.13, 0.13, 1.0]);
+    set(c, imgui::StyleColor::ButtonHovered,     [0.30, 0.30, 0.30, 1.0]);
+    set(c, imgui::StyleColor::ButtonActive,      [0.60, 0.60, 0.60, 1.0]);
+    set(c, imgui::StyleColor::SliderGrab,        [0.40, 0.40, 0.40, 1.0]);
+    set(c, imgui::StyleColor::SliderGrabActive,  [0.60, 0.60, 0.60, 1.0]);
+    set(c, imgui::StyleColor::Tab,               [0.14, 0.14, 0.14, 1.0]);
+    set(c, imgui::StyleColor::TabActive,         [0.25, 0.25, 0.25, 1.0]);
+    set(c, imgui::StyleColor::TabHovered,        [0.20, 0.20, 0.20, 1.0]);
+    set(c, imgui::StyleColor::Border,            [0.08, 0.08, 0.08, 1.0]);
+    set(c, imgui::StyleColor::Separator,         [0.18, 0.18, 0.18, 1.0]);
+    set(c, imgui::StyleColor::MenuBarBg,         [0.12, 0.12, 0.12, 0.8]);
+    set(c, imgui::StyleColor::HeaderHovered,     [0.18, 0.18, 0.18, 1.0]);
+    set(c, imgui::StyleColor::ResizeGrip,        [0.12, 0.12, 0.12, 1.0]);
+    set(c, imgui::StyleColor::ResizeGripActive,  [0.14, 0.14, 0.14, 1.0]);
+    set(c, imgui::StyleColor::ResizeGripHovered, [0.15, 0.15, 0.15, 1.0]);
 }

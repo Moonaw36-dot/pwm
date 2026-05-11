@@ -47,6 +47,9 @@ impl imgui::ClipboardBackend for ArboardClipboard {
 }
 
 fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .init();
+
     let event_loop = EventLoop::new().unwrap();
     let window_builder = WindowBuilder::new()
         .with_title("Aegis")
@@ -70,8 +73,8 @@ fn main() {
     let size = window.inner_size();
     let surface_attribs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
         window.raw_window_handle(),
-        NonZeroU32::new(size.width).unwrap(),
-        NonZeroU32::new(size.height).unwrap(),
+        NonZeroU32::new(size.width.max(1)).unwrap(),
+        NonZeroU32::new(size.height.max(1)).unwrap(),
     );
     let gl_surface = unsafe {
         gl_display.create_window_surface(&gl_config, &surface_attribs).unwrap()
@@ -81,7 +84,10 @@ fn main() {
 
     let gl = unsafe {
         glow::Context::from_loader_function(|s| {
-            gl_display.get_proc_address(&std::ffi::CString::new(s).unwrap())
+            std::ffi::CString::new(s)
+                .ok()
+                .map(|cs| gl_display.get_proc_address(&cs))
+                .unwrap_or(std::ptr::null())
         })
     };
 
@@ -195,7 +201,14 @@ fn main() {
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested, ..
-            } => target.exit(),
+            } => {
+                if state.vault.store.is_some() {
+                    state.modals.confirm_unsaved = true;
+                    state.pending_exit = true;
+                } else {
+                    target.exit();
+                }
+            },
             _ => {}
         }
     }).unwrap();

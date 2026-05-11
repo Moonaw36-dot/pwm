@@ -80,10 +80,10 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                                 }
                             }
                         }
-                        Err(e) => eprintln!("TOTP error for {}: {:?}", entry.label, e),
+                        Err(e) => log::error!("TOTP error for {}: {:?}", entry.label, e),
                     }
                 } else {
-                    eprintln!("Failed to decode Base32 secret for {}", entry.label);
+                    log::error!("Failed to decode Base32 secret for {}", entry.label);
                 }
             }
 
@@ -130,7 +130,7 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
 
             if !url_clicked.get() {
                 if ui.is_item_clicked() {
-                    pending_copy = Some((entry.password.clone(), "password"));
+                    pending_copy = Some((entry.password.to_string(), "password"));
                 } else if ui.is_item_clicked_with_button(imgui::MouseButton::Right) {
                     pending_copy = Some((entry.username.clone(), "username"));
                 } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
@@ -287,27 +287,39 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
             ui.separator();
         }
 
-        let mut pwned_titles: Vec<String> = Vec::new();
-        for entry in &store.entries {
-            let password = &entry.password;
-            if !state.hibp_cache.contains_key(password) {
+        let mut pwned_indices: Vec<usize> = Vec::new();
+        let mut checked_any = false;
+        for (i, entry) in store.entries.iter().enumerate() {
+            let password: &str = &entry.password;
+            if !checked_any && !state.hibp_cache.contains_key(password) {
+                checked_any = true;
                 match haveibeenpwned(password) {
-                    Ok(result) => { state.hibp_cache.insert(password.clone(), result); }
-                    Err(e) => { eprintln!("HIBP error for {}: {e}", entry.label); }
+                    Ok(result) => { state.hibp_cache.insert(password.to_string(), result); }
+                    Err(e) => { log::error!("HIBP error for {}: {e}", entry.label); }
                 }
             }
             if state.hibp_cache.get(password) == Some(&true) {
-                pwned_titles.push(format!("{} - {}", entry.label, mask_password(password)));
+                pwned_indices.push(i);
             }
         }
 
-        if !pwned_titles.is_empty() {
+        if !pwned_indices.is_empty() {
             ui.text("Pwned passwords:");
-            for title in &pwned_titles {
-                ui.text(format!("{title} has been pwned!"));
-                ui.same_line();
-                if ui.button("Modify##pwned") {
-                    state.modals.gen_password = true;
+            for &idx in &pwned_indices {
+                if let Some(entry) = store.entries.get(idx) {
+                    ui.text(format!("{} - {} has been pwned!", entry.label, mask_password(&entry.password)));
+                    ui.same_line();
+                    if ui.button(format!("Modify##pwned{}", idx)) {
+                        state.form.label = entry.label.clone();
+                        state.form.username = entry.username.clone();
+                        state.form.password = entry.password.clone();
+                        state.form.notes = entry.notes.clone();
+                        state.form.totp = entry.totp_secret.clone().unwrap_or_default();
+                        state.form.url = entry.url.clone();
+                        state.form.tag = entry.tags.as_deref().map(|t| t.join(", ")).unwrap_or_default();
+                        state.form.custom_fields = entry.custom_fields.clone();
+                        state.edit_index = Some(idx);
+                    }
                 }
             }
             ui.separator();
@@ -331,7 +343,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
             ui.text(title);
         }
 
-        if weak_titles.is_empty() && reused_groups.is_empty() && pwned_titles.is_empty() && old_titles.is_empty() {
+        if weak_titles.is_empty() && reused_groups.is_empty() && pwned_indices.is_empty() && old_titles.is_empty() {
             ui.text("Good job! Every password is safe!");
         }
     }

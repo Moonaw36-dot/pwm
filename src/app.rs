@@ -1,6 +1,6 @@
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use std::time::{Duration, Instant};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 use crate::file_ops::{open_file_dialog, save_store};
 use crate::strength::{StrengthResult, manual_strength};
 
@@ -20,7 +20,7 @@ impl AppState {
             form: crate::models::EntryForm {
                 label: String::with_capacity(256),
                 username: String::with_capacity(256),
-                password: String::with_capacity(256),
+                password: Zeroizing::new(String::with_capacity(256)),
                 notes: String::with_capacity(256),
                 totp: String::with_capacity(256),
                 url: String::with_capacity(256),
@@ -51,9 +51,12 @@ impl AppState {
                 master_is_create: false,
                 confirm_delete: false,
                 show_success: false,
+                confirm_unsaved: false,
             },
             clipboard: crate::models::ClipboardState {
-                handle: arboard::Clipboard::new().expect("Failed to access system clipboard"),
+                handle: arboard::Clipboard::new()
+                    .map_err(|_| log::warn!("System clipboard unavailable; clipboard operations disabled"))
+                    .ok(),
                 clear_at: None,
                 copied_field: None,
                 copied_clear_at: None,
@@ -69,6 +72,7 @@ impl AppState {
             custom_success_message: None,
             strength_cache: None,
             hibp_cache: std::collections::HashMap::new(),
+            pending_exit: false,
         }
     }
 
@@ -90,7 +94,7 @@ impl AppState {
     }
 
     pub fn clear_inputs(&mut self) {
-        self.form.password.zeroize();
+        self.form.password = Zeroizing::new(String::new());
         self.form.custom_fields.clear();
         self.form.url.clear();
         self.form.label.clear();
@@ -103,17 +107,19 @@ impl AppState {
 
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
         if let Some((ref cached_pw, result)) = self.strength_cache
-            && cached_pw == password
+            && **cached_pw == password
         {
             return result;
         }
         let result = manual_strength(password);
-        self.strength_cache = Some((password.to_string(), result));
+        self.strength_cache = Some((Zeroizing::new(password.to_string()), result));
         result
     }
 
     pub fn copy_to_clipboard(&mut self, text: &str, field_name: &str) {
-        crate::clipboard::set_excluded_from_history(&mut self.clipboard.handle, text);
+        if let Some(ref mut handle) = self.clipboard.handle {
+            crate::clipboard::set_excluded_from_history(handle, text);
+        }
         self.clipboard.clear_at = Some(Instant::now() + Duration::from_secs(10));
         self.clipboard.copied_field = Some(field_name.to_string());
         self.clipboard.copied_clear_at = Some(Instant::now() + Duration::from_secs(3));

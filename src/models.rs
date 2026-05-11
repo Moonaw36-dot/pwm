@@ -11,7 +11,7 @@ use crate::strength::StrengthResult;
 pub struct PasswordEntry {
     pub label: String,
     pub username: String,
-    pub password: String,
+    pub password: Zeroizing<String>,
     pub notes: String,
     pub totp_secret: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -40,7 +40,7 @@ pub struct Vault {
 pub struct EntryForm {
     pub label: String,
     pub username: String,
-    pub password: String,
+    pub password: Zeroizing<String>,
     pub notes: String,
     pub totp: String,
     pub url: String,
@@ -73,10 +73,11 @@ pub struct Modals {
     pub master_is_create: bool,
     pub confirm_delete: bool,
     pub show_success: bool,
+    pub confirm_unsaved: bool,
 }
 
 pub struct ClipboardState {
-    pub handle: Clipboard,
+    pub handle: Option<Clipboard>,
     pub clear_at: Option<Instant>,
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
@@ -98,6 +99,7 @@ pub struct AppState {
     pub delete_idx: Option<usize>,
     pub custom_error_message: Option<String>,
     pub custom_success_message: Option<String>,
-    pub strength_cache: Option<(String, StrengthResult)>,
+    pub strength_cache: Option<(Zeroizing<String>, StrengthResult)>,
     pub hibp_cache: std::collections::HashMap<String, bool>,
+    pub pending_exit: bool,
 }
