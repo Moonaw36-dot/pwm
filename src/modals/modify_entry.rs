@@ -90,6 +90,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
             totp_cache: None,
             };        state.save();
         state.edit_index = None;
+        state.clear_inputs();
         ui.close_current_popup();
     }
 

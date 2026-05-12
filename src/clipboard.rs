@@ -46,6 +46,8 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
             return Err(());
         }
 
+        let byte_len = utf16.len() * size_of::<u16>();
+
         let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len);
         if hmem.is_null() {
             CloseClipboard();
@@ -53,9 +55,6 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
         }
 
         EmptyClipboard();
-
-        // Allocate global memory and write the text
-        let byte_len = utf16.len() * size_of::<u16>();
 
         let ptr = GlobalLock(hmem) as *mut u16;
         if ptr.is_null() {
