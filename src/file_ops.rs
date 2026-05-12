@@ -140,7 +140,7 @@ fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32, 
 
     if let Some(kf) = keyfile_bytes {
         let mut combined = Zeroizing::new(Vec::with_capacity(32 + kf.len()));
-        let key_ref: &[u8; 32] = &*key;
+        let key_ref: &[u8; 32] = &key;
         combined.extend_from_slice(key_ref);
         combined.extend_from_slice(kf);
         key.copy_from_slice(&Sha256::digest(&*combined));
@@ -148,7 +148,6 @@ fn derive_key_params(password: &str, salt: &[u8; 16], m_cost: u32, t_cost: u32, 
 
     Ok(key)
 }
-
 fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Vec<u8>, String> {
     let json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?);
     let cipher = Aes256Gcm::new(key.into());
