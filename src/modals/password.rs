@@ -32,6 +32,12 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
         ui.input_text("Username##add", &mut state.form.username).build();
         ui.input_text("Password##add", &mut state.form.password).password(true).build();
 
+        ui.same_line();
+
+        if ui.button("Copy password") && let Some(ref mut handle) = state.clipboard.handle{
+            crate::clipboard::set_excluded_from_history(handle, &state.form.password);
+        }
+
         let pw = state.form.password.clone();
         let strength = state.cached_strength(&pw);
         render_strength_bar(ui, strength);
