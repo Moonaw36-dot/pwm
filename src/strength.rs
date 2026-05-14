@@ -1,6 +1,5 @@
 use sha1::{Digest, Sha1};
 use std::time::Duration;
-use zeroize::Zeroizing;
 
 static WORDLIST: &str = include_str!("../assets/wordlist.txt");
 

@@ -1,10 +1,5 @@
-use zeroize::Zeroizing;
 use crate::app::AppState;
-use crate::modals::{add_entry_from_inputs, render_strength_bar};
 use crate::models::PasswordType;
-use crate::strength::GenMode::Password;
-use crate::strength::verify_password;
-use crate::theme;
 
 pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
     if !state.has_chosen_type {

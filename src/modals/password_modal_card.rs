@@ -22,7 +22,7 @@ pub fn luhn_check(card: &str) -> bool {
 }
 
 pub fn render(ui: &imgui::Ui, state: &mut AppState) {
-    if ui.input_text("Card number", &mut *state.form.number)
+    if ui.input_text("Card number", &mut state.form.number)
         .password(true)
         .chars_decimal(true)
         .build()
