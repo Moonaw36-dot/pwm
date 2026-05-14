@@ -23,7 +23,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         for entry in &store.entries {
 
             if entry.password_type != PasswordType::Normal {
-                return
+                continue
             }
 
             if entry.is_secure_note {
@@ -50,7 +50,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         for entry in &store.entries {
 
             if entry.password_type != PasswordType::Normal {
-                return
+                continue
             }
 
             let hash = crate::app::hash_password(entry.password.as_str());
@@ -71,7 +71,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut checked_any = false;
         for (i, entry) in store.entries.iter().enumerate() {
             if entry.password_type != PasswordType::Normal {
-                return
+                continue;
             }
 
             if entry.is_secure_note {
