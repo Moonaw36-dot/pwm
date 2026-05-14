@@ -176,6 +176,7 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if state.modals.add_password {
+        state.has_chosen_type = false;
         ui.open_popup("Add a password");
         state.modals.add_password = false;
     }

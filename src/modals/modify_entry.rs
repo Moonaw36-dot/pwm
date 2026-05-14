@@ -88,6 +88,10 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
             is_secure_note: state.form.is_secure_note,
             created_at: store.entries[idx].created_at,
             totp_cache: None,
+            password_type: store.entries[idx].password_type,
+            number: store.entries[idx].number.clone(),
+            expiration_date: store.entries[idx].expiration_date.clone(),
+            cvc: store.entries[idx].cvc.clone(),
             };        state.save();
         state.edit_index = None;
         state.clear_inputs();

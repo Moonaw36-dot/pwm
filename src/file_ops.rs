@@ -6,6 +6,7 @@ use aes_gcm::aead::{Aead, OsRng};
 use sha2::{Sha256, Digest};
 use zeroize::{Zeroize, Zeroizing};
 use crate::app::{AppState, PasswordEntry, PasswordList};
+use crate::models::PasswordType;
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -81,6 +82,10 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
             is_secure_note: false,
             created_at: None,
             totp_cache: None,
+            password_type: PasswordType::Normal,
+            number: None,
+            expiration_date: None,
+            cvc: None,
         });
     }
 

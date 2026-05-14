@@ -20,8 +20,20 @@ pub struct PasswordEntry {
     pub custom_fields: Vec<(String, String)>,
     pub is_secure_note: bool,
     pub created_at: Option<u64>,
+    pub password_type: PasswordType,
+    pub number: Option<Zeroizing<String>>,
+    pub expiration_date: Option<Zeroizing<String>>,
+    pub cvc: Option<Zeroizing<String>>,
     #[serde(skip)]
     pub totp_cache: Option<TOTP>,
+}
+
+#[derive(Copy, PartialEq, Clone, Default, Debug, Serialize, Deserialize)]
+pub enum PasswordType {
+    #[default]
+    Normal,
+    Card,
+    WiFi,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +54,7 @@ pub struct Vault {
 }
 
 pub struct EntryForm {
+    // PASSWORD NORMAL
     pub label: String,
     pub username: String,
     pub password: Zeroizing<String>,
@@ -50,7 +63,13 @@ pub struct EntryForm {
     pub url: String,
     pub tag: String,
     pub custom_fields: Vec<(String, String)>,
+    pub password_type: PasswordType,
     pub is_secure_note: bool,
+
+    // ------ CARD -------
+    pub number: Zeroizing<String>,
+    pub expiration_date: Zeroizing<String>,
+    pub cvc: Zeroizing<String>
 }
 
 pub struct Generator {
@@ -96,6 +115,7 @@ pub struct AppState {
     pub clipboard: ClipboardState,
 
     // One-off fields that don't belong in any group.
+    pub has_chosen_type: bool,
     pub search: String,
     pub filename_input: String,
     pub master_input: Zeroizing<String>,
@@ -127,6 +147,10 @@ mod tests {
             is_secure_note: false,
             created_at: Some(1234567890),
             totp_cache: None,
+            password_type: PasswordType::Normal,
+            number: None,
+            expiration_date: None,
+            cvc: None,
         };
 
         let json = serde_json::to_string(&entry).unwrap();
@@ -141,6 +165,10 @@ mod tests {
         assert_eq!(tags[1], "tag2");
         assert_eq!(deserialized.custom_fields[0].0, "key");
         assert_eq!(deserialized.created_at, Some(1234567890));
+        assert_eq!(deserialized.password_type, PasswordType::Normal);
+        assert!(deserialized.number.is_none());
+        assert!(deserialized.expiration_date.is_none());
+        assert!(deserialized.cvc.is_none());
     }
 
     #[test]
@@ -150,6 +178,8 @@ mod tests {
         assert!(entry.password.is_empty());
         assert!(entry.custom_fields.is_empty());
         assert!(!entry.is_secure_note);
+        assert_eq!(entry.password_type, PasswordType::Normal);
+        assert!(entry.number.is_none());
     }
 
     #[test]

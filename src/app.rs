@@ -2,6 +2,7 @@ pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 use crate::file_ops::{open_file_dialog, save_store};
+use crate::models::PasswordType;
 use crate::strength::{StrengthResult, manual_strength};
 
 impl AppState {
@@ -27,7 +28,11 @@ impl AppState {
                 url: String::with_capacity(256),
                 tag: String::with_capacity(256),
                 is_secure_note: false,
+                number: Zeroizing::new(String::with_capacity(256)),
+                expiration_date: Default::default(),
                 custom_fields: Vec::new(),
+                password_type: PasswordType::Normal,
+                cvc: Default::default(),
             },
             generator: crate::models::Generator {
                 mode: crate::strength::GenMode::Password,
@@ -64,6 +69,7 @@ impl AppState {
                 copied_clear_at: None,
             },
 
+            has_chosen_type: false,
             search: String::with_capacity(256),
             filename_input: String::with_capacity(256),
             master_input: Zeroizing::new(String::new()),
@@ -107,7 +113,12 @@ impl AppState {
         self.form.notes.clear();
         self.form.tag.clear();
         self.form.totp.clear();
+        self.form.number = Zeroizing::new(String::new());
+        self.form.expiration_date = Zeroizing::new(String::new());
+        self.form.cvc = Zeroizing::new(String::new());
         self.form.is_secure_note = false;
+        self.form.password_type = PasswordType::Normal;
+        self.has_chosen_type = false;
     }
 
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {

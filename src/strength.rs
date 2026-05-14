@@ -1,5 +1,6 @@
 use sha1::{Digest, Sha1};
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 static WORDLIST: &str = include_str!("../assets/wordlist.txt");
 
@@ -26,6 +27,24 @@ pub enum PasswordSafety {
     NoLowerCase,
     NoUpperCase,
     TooFewWords,
+}
+
+pub fn get_card_issuer(card: &str) -> String {
+    if card.starts_with("4") {
+        return "Visa".into();
+    }
+    if card.starts_with("51")
+        || card.starts_with("52")
+        || card.starts_with("53")
+        || card.starts_with("54")
+        || card.starts_with("55")
+    {
+        return "Mastercard".into();
+    }
+    if card.starts_with("34") || card.starts_with("37") {
+        return "American Express".into();
+    }
+    "Unknown".into()
 }
 
 pub type StrengthResult = (u8, &'static str, [f32; 4]);

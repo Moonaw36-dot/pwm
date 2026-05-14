@@ -56,6 +56,53 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                 continue;
             }
 
+            if entry.password_type == crate::models::PasswordType::Card {
+                let tags_part = entry.tags.as_deref()
+                    .map(|t| format!("[{}] ", t.join(", ")))
+                    .unwrap_or_default();
+
+                let masked_number = entry.number.as_ref()
+                    .map(|n| {
+                        let s = n.as_str();
+                        if s.len() > 4 {
+                            format!("**** **** **** {}", &s[s.len()-4..])
+                        } else {
+                            s.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+
+                let expiry = entry.expiration_date.as_ref().map(|s| s.as_str()).unwrap_or("");
+
+                ui.text(format!(
+                    "{}[{}] | {} | {}",
+                    tags_part, entry.label, masked_number, expiry
+                ));
+
+                if ui.is_item_clicked() && let Some(number) = &entry.number {
+                    pending_copy = Some((number.to_string(), "card number"));
+                }
+
+                if ui.is_item_clicked_with_button(imgui::MouseButton::Right) && let Some(cvc) = &entry.cvc {
+                    pending_copy = Some((cvc.to_string(), "CVC"));
+                }
+
+                if ui.is_item_hovered() {
+                    ui.tooltip(|| {
+                        ui.text("Left click to copy the card number.");
+                        ui.separator();
+                        ui.text("Right click to copy the CVC.");
+                        if !entry.custom_fields.is_empty() {
+                            ui.separator();
+                            for (name, value) in &entry.custom_fields {
+                                ui.text(format!("{}: {}", name, value));
+                            }
+                        }
+                    });
+                }
+
+                continue;
+            }
 
             let mut totp_code: Option<String> = None;
             let mut totp_timeout: Option<String> = None;

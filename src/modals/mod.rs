@@ -10,6 +10,8 @@ pub mod password;
 pub mod settings;
 pub mod success;
 pub mod warning;
+mod password_modal_normal;
+mod password_modal_card;
 
 pub use confirm_delete::confirm_delete_modal;
 pub use confirm_unsaved::confirm_unsaved_modal;
@@ -76,6 +78,10 @@ fn add_entry_from_inputs(state: &mut AppState) {
         is_secure_note: state.form.is_secure_note,
         created_at: Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()),
         totp_cache: None,
+        password_type: state.form.password_type,
+        number: std::mem::replace(&mut state.form.number, Zeroizing::new(String::new())).into(),
+        expiration_date: std::mem::replace(&mut state.form.expiration_date, Zeroizing::new(String::new())).into(),
+        cvc: std::mem::replace(&mut state.form.cvc, Zeroizing::new(String::new())).into(),
     };
 
     if let Some(store) = &mut state.vault.store {
