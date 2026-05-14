@@ -1,4 +1,4 @@
-use crate::models::AppState;
+use crate::models::{AppState, PasswordType};
 use crate::strength::{haveibeenpwned, manual_strength};
 
 pub fn mask_password(s: &str) -> String {
@@ -21,6 +21,11 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut weak_titles: Vec<String> = Vec::new();
 
         for entry in &store.entries {
+
+            if entry.password_type != PasswordType::Normal {
+                return
+            }
+
             if entry.is_secure_note {
                 continue
             }
@@ -43,6 +48,11 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut seen: HashMap<u64, Vec<&str>> = HashMap::new();
 
         for entry in &store.entries {
+
+            if entry.password_type != PasswordType::Normal {
+                return
+            }
+
             let hash = crate::app::hash_password(entry.password.as_str());
             seen.entry(hash).or_default().push(entry.username.as_str());
         }
@@ -60,6 +70,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut pwned_indices: Vec<usize> = Vec::new();
         let mut checked_any = false;
         for (i, entry) in store.entries.iter().enumerate() {
+            if entry.password_type != PasswordType::Normal {
+                return
+            }
+
             if entry.is_secure_note {
                 continue;
             }
