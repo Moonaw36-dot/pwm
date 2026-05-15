@@ -57,9 +57,6 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
             }
 
             if entry.password_type == crate::models::PasswordType::Card {
-                let tags_part = entry.tags.as_deref()
-                    .map(|t| format!("[{}] ", t.join(", ")))
-                    .unwrap_or_default();
 
                 let masked_number = entry.number.as_ref()
                     .map(|n| {
@@ -75,8 +72,8 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                 let expiry = entry.expiration_date.as_ref().map(|s| s.as_str()).unwrap_or("");
 
                 ui.text(format!(
-                    "{}[{}] | {} | {}",
-                    tags_part, entry.label, masked_number, expiry
+                    "[CARD] {} | {}",
+                     masked_number, expiry
                 ));
 
                 if ui.is_item_clicked() && let Some(number) = &entry.number {

@@ -51,31 +51,7 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.separator();
 
-
-    if ui.button("Add field") {
-        state.form.custom_fields.push((String::new(), String::new()));
-
-    }
-
-
-    let mut remove_idx = None;
-    for (i, (key, val)) in state.form.custom_fields.iter_mut().enumerate() {
-        ui.set_next_item_width(theme::CUSTOM_FIELD_NAME_WIDTH);
-
-        ui.input_text(format!("##add_field_name_{i}"), key).hint("Field name").build();
-        ui.same_line();
-
-        ui.set_next_item_width(theme::CUSTOM_FIELD_VALUE_WIDTH);
-        ui.input_text(format!("##add_field_value_{i}"), val).build();
-        ui.same_line();
-
-        if ui.button(format!("x##add_field_remove_{i}")) {
-            remove_idx = Some(i);
-        }
-    }
-    if let Some(i) = remove_idx {
-        state.form.custom_fields.remove(i);
-    }
+    crate::modals::render_custom_fields_editor(ui, &mut state.form.custom_fields, "add");
 
     if ui.button("Add") {
         let is_valid = !state.form.label.is_empty() &&

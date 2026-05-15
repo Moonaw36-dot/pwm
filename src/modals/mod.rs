@@ -12,6 +12,8 @@ pub mod success;
 pub mod warning;
 mod password_modal_normal;
 mod password_modal_card;
+mod modify_entry_normal;
+mod modify_entry_card;
 
 pub use confirm_delete::confirm_delete_modal;
 pub use confirm_unsaved::confirm_unsaved_modal;
@@ -28,7 +30,8 @@ pub use warning::warning_modal;
 
 use zeroize::Zeroizing;
 use crate::app::{AppState, PasswordEntry};
-use crate::strength::StrengthResult;
+use crate::strength::{get_card_issuer, StrengthResult};
+use crate::theme;
 
 pub(crate) fn render_strength_bar(ui: &imgui::Ui, (score, label, color): StrengthResult) {
     let fraction = (score + 1) as f32 / 5.0;
@@ -49,19 +52,6 @@ pub(crate) fn render_strength_bar(ui: &imgui::Ui, (score, label, color): Strengt
     ui.get_window_draw_list().add_text([text_x, text_y], [1.0, 1.0, 1.0, 1.0], label);
 }
 
-fn parse_tags(s: String) -> Option<Vec<String>> {
-    let v: Vec<String> = s.split(',')
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .collect();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-fn sanitize_totp(s: String) -> Option<String> {
-    let s = s.trim().replace(' ', "").to_uppercase();
-    if s.is_empty() { None } else { Some(s) }
-}
-
 fn add_entry_from_inputs(state: &mut AppState) {
     let entry = PasswordEntry {
         label: std::mem::take(&mut state.form.label),
@@ -69,8 +59,8 @@ fn add_entry_from_inputs(state: &mut AppState) {
         password: std::mem::replace(&mut state.form.password, Zeroizing::new(String::new())),
         notes: std::mem::take(&mut state.form.notes),
         url: std::mem::take(&mut state.form.url),
-        totp_secret: sanitize_totp(std::mem::take(&mut state.form.totp)),
-        tags: parse_tags(state.form.tag.clone()),
+        totp_secret: crate::modals::modify_entry::sanitize_totp(std::mem::take(&mut state.form.totp)),
+        tags: crate::modals::modify_entry::parse_tags(state.form.tag.clone()),
         custom_fields: std::mem::take(&mut state.form.custom_fields)
             .into_iter()
             .filter(|(k, _)| !k.trim().is_empty())
@@ -88,4 +78,69 @@ fn add_entry_from_inputs(state: &mut AppState) {
         store.entries.push(entry);
     }
     state.save();
+}
+
+pub(crate) fn render_card_fields(ui: &imgui::Ui, state: &mut AppState) {
+    if ui.input_text("Card number", &mut state.form.number)
+        .password(true)
+        .chars_decimal(true)
+        .build()
+    {
+        state.form.number.truncate(19);
+    }
+
+    let card = state.form.number.as_str();
+    if !card.is_empty() {
+        let issuer = get_card_issuer(card);
+        ui.text_colored([0.5, 0.5, 0.5, 1.0], issuer);
+
+        let valid = crate::modals::password_modal_card::luhn_check(card);
+        if valid {
+            ui.text_colored([0.0, 0.8, 0.0, 1.0], "Valid");
+        } else if card.len() >= 13 {
+            ui.text_colored([0.8, 0.0, 0.0, 1.0], "Invalid");
+        }
+    }
+
+    if ui.input_text("Expiry date", &mut state.form.expiration_date)
+        .chars_decimal(true)
+        .build()
+    {
+        let mut digits: String = state.form.expiration_date.chars().filter(|c| c.is_ascii_digit()).collect();
+        digits.truncate(4);
+        if digits.len() >= 3 {
+            state.form.expiration_date = format!("{}/{}", &digits[..2], &digits[2..]).into();
+        } else {
+            state.form.expiration_date = digits.into();
+        }
+    }
+
+    if ui.input_text("CVC", &mut state.form.cvc)
+        .chars_decimal(true)
+        .build()
+    {
+        state.form.cvc.truncate(4);
+    }
+}
+
+pub(crate) fn render_custom_fields_editor(ui: &imgui::Ui, fields: &mut Vec<(String, String)>, id_prefix: &str) {
+    if ui.button(format!("Add field##{id_prefix}")) {
+        fields.push((String::new(), String::new()));
+    }
+
+    let mut remove_idx = None;
+    for (i, (key, val)) in fields.iter_mut().enumerate() {
+        ui.set_next_item_width(theme::CUSTOM_FIELD_NAME_WIDTH);
+        ui.input_text(format!("##{id_prefix}_field_name_{i}"), key).hint("Field name").build();
+        ui.same_line();
+        ui.set_next_item_width(theme::CUSTOM_FIELD_VALUE_WIDTH);
+        ui.input_text(format!("##{id_prefix}_field_value_{i}"), val).build();
+        ui.same_line();
+        if ui.button(format!("x##{id_prefix}_field_remove_{i}")) {
+            remove_idx = Some(i);
+        }
+    }
+    if let Some(i) = remove_idx {
+        fields.remove(i);
+    }
 }
