@@ -217,6 +217,13 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::modify_entry_modal(ui, state);
     }
 
+    if state.delete_idx.is_some() {
+        ui.open_popup("Delete entry");
+    }
+    if let Some(_token) = ui.begin_modal_popup("Delete entry") {
+        crate::modals::confirm_delete_modal(ui, state);
+    }
+
 
 
     if state.custom_error_message.is_some() {

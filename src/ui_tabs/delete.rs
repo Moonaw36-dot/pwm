@@ -1,4 +1,4 @@
-use crate::models::AppState;
+use crate::models::{AppState, PasswordType};
 
 pub fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
     if state.vault.store.is_none() {
@@ -8,14 +8,9 @@ pub fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.text("Delete passwords.");
 
-    if let Some(store) = &state.vault.store {
-        for (i, entry) in store.entries.iter().enumerate() {
-            ui.text(format!("{} - {}", entry.label, entry.username));
-            ui.same_line();
-            if ui.button(format!("Remove##remove{}", i)) {
-                state.modals.confirm_delete = true;
-                state.delete_idx = Some(i);
-            }
-        }
+
+    if let Some((idx, _entry)) = crate::modals::render_entries_list(ui, state, "Delete") {
+        state.delete_idx = Some(idx as usize);
     }
+
 }

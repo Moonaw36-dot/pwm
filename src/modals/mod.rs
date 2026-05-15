@@ -15,6 +15,8 @@ mod password_modal_card;
 mod modify_entry_normal;
 mod modify_entry_card;
 
+use rfd::MessageDialogResult::No;
+use serde_json::map::Entry;
 pub use confirm_delete::confirm_delete_modal;
 pub use confirm_unsaved::confirm_unsaved_modal;
 pub use custom_error::custom_error_modal;
@@ -30,6 +32,7 @@ pub use warning::warning_modal;
 
 use zeroize::Zeroizing;
 use crate::app::{AppState, PasswordEntry};
+use crate::models::PasswordType;
 use crate::strength::{get_card_issuer, StrengthResult};
 use crate::theme;
 
@@ -143,4 +146,55 @@ pub(crate) fn render_custom_fields_editor(ui: &imgui::Ui, fields: &mut Vec<(Stri
     if let Some(i) = remove_idx {
         fields.remove(i);
     }
+}
+
+// TODO: Finish this
+pub(crate) fn copy_entries(state: &mut AppState, pw_type: PasswordType, entry: &PasswordEntry) {
+    match pw_type {
+        PasswordType::Normal => {
+            state.form.label = entry.label.clone();
+            state.form.is_secure_note = entry.is_secure_note;
+            state.form.username = entry.username.clone();
+            state.form.password = entry.password.clone();
+            state.form.notes = entry.notes.clone();
+            state.form.totp = entry.totp_secret.clone().unwrap_or_default();
+            state.form.url = entry.url.clone();
+            state.form.tag = entry.tags.as_deref().map(|t| t.join(", ")).unwrap_or_default();
+            state.form.custom_fields = entry.custom_fields.clone();
+            state.edit_index = None;
+        }
+        PasswordType::Card =>   {
+            state.form.number = entry.number.clone().unwrap_or_default();
+            state.form.cvc = entry.cvc.clone().unwrap_or_default();
+            state.form.expiration_date = entry.expiration_date.clone().unwrap_or_default();
+        }
+        _ => { }
+    }
+}
+
+pub(crate) fn render_entries_list(ui: &imgui::Ui ,state: &mut AppState, from: &str) -> Option<(u32, PasswordEntry)> {
+    if let Some(store) = &state.vault.store {
+        let mut clicked_idx = None;
+        let mut clicked_entry = None;
+        for (i, entry) in store.entries.iter().enumerate() {
+            if entry.password_type == PasswordType::Card {
+                ui.text(format!("{} - {}", entry.number.as_deref().unwrap(), entry.cvc.as_deref().unwrap()));
+                ui.same_line();
+            }
+            else if entry.password_type == PasswordType::Normal {
+                ui.text(format!("{} - {}", entry.label, entry.username));
+                ui.same_line();
+            }
+
+            if ui.button(format!("{}##{}{}",from,from, i)) {
+                clicked_idx = Some(i);
+                clicked_entry = Some(entry);
+            }
+        }
+        if let Some(idx) = clicked_idx && let Some(entry) = clicked_entry {
+            return Some((idx as u32, entry.clone()));
+        }
+        return None
+    }
+    None
 }
