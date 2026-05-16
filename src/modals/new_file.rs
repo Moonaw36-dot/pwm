@@ -9,7 +9,7 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     if ui.button("OK") {
         state.filename_input = if state.filename_input.is_empty() {
-            return
+            return;
         } else {
             state.filename_input.trim().to_string()
         };

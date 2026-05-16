@@ -6,17 +6,21 @@ pub fn confirm_unsaved_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("You have unsaved changes. What would you like to do?");
 
     if ui.button("Save and Exit") {
-        state.save();
-        state.pending_exit = false;
-        ui.close_current_popup();
-        std::process::exit(0);
+        match state.save_result() {
+            Ok(()) => {
+                state.pending_exit = false;
+                state.should_exit = true;
+                ui.close_current_popup();
+            }
+            Err(e) => state.custom_error_message = Some(e),
+        }
     }
 
     ui.same_line();
     if ui.button("Exit without Saving") {
         state.pending_exit = false;
+        state.should_exit = true;
         ui.close_current_popup();
-        std::process::exit(0);
     }
 
     ui.same_line();

@@ -1,9 +1,9 @@
-pub use crate::models::{AppState, PasswordEntry, PasswordList};
-use std::time::{Duration, Instant};
-use zeroize::Zeroizing;
 use crate::file_ops::{open_file_dialog, save_store};
 use crate::models::PasswordType;
+pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use crate::strength::{StrengthResult, manual_strength};
+use std::time::{Duration, Instant};
+use zeroize::Zeroizing;
 
 impl AppState {
     pub fn new() -> Self {
@@ -23,14 +23,14 @@ impl AppState {
                 label: String::with_capacity(256),
                 username: String::with_capacity(256),
                 password: Zeroizing::new(String::with_capacity(256)),
-                notes: String::with_capacity(256),
-                totp: String::with_capacity(256),
+                notes: Zeroizing::new(String::with_capacity(256)),
+                totp: Zeroizing::new(String::with_capacity(256)),
                 url: String::with_capacity(256),
                 tag: String::with_capacity(256),
                 is_secure_note: false,
                 number: Zeroizing::new(String::with_capacity(256)),
                 expiration_date: Default::default(),
-                custom_fields: Vec::new(),
+                custom_fields: Zeroizing::new(Vec::new()),
                 password_type: PasswordType::Normal,
                 cvc: Default::default(),
             },
@@ -62,7 +62,9 @@ impl AppState {
             },
             clipboard: crate::models::ClipboardState {
                 handle: arboard::Clipboard::new()
-                    .map_err(|_| log::warn!("System clipboard unavailable; clipboard operations disabled"))
+                    .map_err(|_| {
+                        log::warn!("System clipboard unavailable; clipboard operations disabled")
+                    })
                     .ok(),
                 clear_at: None,
                 copied_field: None,
@@ -73,6 +75,7 @@ impl AppState {
             search: String::with_capacity(256),
             filename_input: String::with_capacity(256),
             master_input: Zeroizing::new(String::new()),
+            master_confirm_input: Zeroizing::new(String::new()),
             settings_timeout_mins: 0,
             edit_index: None,
             delete_idx: None,
@@ -80,12 +83,15 @@ impl AppState {
             custom_success_message: None,
             strength_cache: None,
             hibp_cache: std::collections::HashMap::new(),
+            hibp_pending: None,
             pending_exit: false,
+            should_exit: false,
         }
     }
 
     pub fn open_file(&mut self) {
         if let Some((name, path)) = open_file_dialog() {
+            self.close_file();
             self.vault.file_name = name;
             let config = crate::config::load();
             self.vault.keyfile_hash = config.keyfile_hashes.get(path.as_path()).copied();
@@ -102,6 +108,20 @@ impl AppState {
         self.vault.keyfile = None;
         self.vault.keyfile_hash = None;
         self.vault.keyfile_bytes = None;
+        self.clear_inputs();
+        self.master_input = Zeroizing::new(String::new());
+        self.master_confirm_input = Zeroizing::new(String::new());
+        self.strength_cache = None;
+        self.edit_index = None;
+        self.delete_idx = None;
+        if let Some(ref mut handle) = self.clipboard.handle {
+            crate::clipboard::set_excluded_from_history(handle, "");
+        }
+        self.clipboard.clear_at = None;
+        self.clipboard.copied_field = None;
+        self.clipboard.copied_clear_at = None;
+        self.hibp_cache.clear();
+        self.hibp_pending = None;
     }
 
     pub fn clear_inputs(&mut self) {
@@ -110,9 +130,9 @@ impl AppState {
         self.form.url.clear();
         self.form.label.clear();
         self.form.username.clear();
-        self.form.notes.clear();
+        self.form.notes = Zeroizing::new(String::new());
         self.form.tag.clear();
-        self.form.totp.clear();
+        self.form.totp = Zeroizing::new(String::new());
         self.form.number = Zeroizing::new(String::new());
         self.form.expiration_date = Zeroizing::new(String::new());
         self.form.cvc = Zeroizing::new(String::new());
@@ -141,10 +161,17 @@ impl AppState {
         self.clipboard.copied_clear_at = Some(Instant::now() + Duration::from_secs(3));
     }
 
-    pub fn save(&mut self) {
+    pub fn save_result(&mut self) -> Result<(), String> {
         if let Some(key) = &self.vault.encryption_key
             && let Some(store) = &self.vault.store
-            && let Err(e) = save_store(&self.vault.file_path, store, key) {
+        {
+            save_store(&self.vault.file_path, store, key)?;
+        }
+        Ok(())
+    }
+
+    pub fn save(&mut self) {
+        if let Err(e) = self.save_result() {
             self.custom_error_message = Some(e);
         }
     }
@@ -177,7 +204,10 @@ mod tests {
         let r1 = state.cached_strength("weak");
         let r2 = state.cached_strength("Abcdefg1!hijklmn");
         assert_ne!(r1, r2);
-        assert_eq!(state.strength_cache.as_ref().unwrap().0.as_str(), "Abcdefg1!hijklmn");
+        assert_eq!(
+            state.strength_cache.as_ref().unwrap().0.as_str(),
+            "Abcdefg1!hijklmn"
+        );
     }
 
     #[test]

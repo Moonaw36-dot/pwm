@@ -35,7 +35,9 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows_sys::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
+    };
 
     // Encode as UTF-16 with null terminator (CF_UNICODETEXT requirement)
     let mut utf16: Vec<u16> = text.encode_utf16().collect();

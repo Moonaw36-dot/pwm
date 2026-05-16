@@ -1,7 +1,7 @@
-use zeroize::Zeroizing;
 use crate::app::AppState;
 use crate::modals::add_entry_from_inputs;
 use crate::strength::{PasswordSafety, generate_password, verify_password};
+use zeroize::Zeroizing;
 
 pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Your password has issues:");

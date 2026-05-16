@@ -1,11 +1,11 @@
-use serde::{Serialize, Deserialize};
-use zeroize::Zeroizing;
+use crate::strength::GenMode;
+use crate::strength::StrengthResult;
+use arboard::Clipboard;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
-use crate::strength::GenMode;
-use arboard::Clipboard;
-use crate::strength::StrengthResult;
 use totp_rs::TOTP;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -13,11 +13,11 @@ pub struct PasswordEntry {
     pub label: String,
     pub username: String,
     pub password: Zeroizing<String>,
-    pub notes: String,
-    pub totp_secret: Option<String>,
+    pub notes: Zeroizing<String>,
+    pub totp_secret: Zeroizing<Option<String>>,
     pub tags: Option<Vec<String>>,
     pub url: String,
-    pub custom_fields: Vec<(String, String)>,
+    pub custom_fields: Zeroizing<Vec<(String, String)>>,
     pub is_secure_note: bool,
     pub created_at: Option<u64>,
     pub password_type: PasswordType,
@@ -58,18 +58,18 @@ pub struct EntryForm {
     pub label: String,
     pub username: String,
     pub password: Zeroizing<String>,
-    pub notes: String,
-    pub totp: String,
+    pub notes: Zeroizing<String>,
+    pub totp: Zeroizing<String>,
     pub url: String,
     pub tag: String,
-    pub custom_fields: Vec<(String, String)>,
+    pub custom_fields: Zeroizing<Vec<(String, String)>>,
     pub password_type: PasswordType,
     pub is_secure_note: bool,
 
     // ------ CARD -------
     pub number: Zeroizing<String>,
     pub expiration_date: Zeroizing<String>,
-    pub cvc: Zeroizing<String>
+    pub cvc: Zeroizing<String>,
 }
 
 pub struct Generator {
@@ -119,6 +119,7 @@ pub struct AppState {
     pub search: String,
     pub filename_input: String,
     pub master_input: Zeroizing<String>,
+    pub master_confirm_input: Zeroizing<String>,
     pub settings_timeout_mins: u32,
     pub edit_index: Option<usize>,
     pub delete_idx: Option<usize>,
@@ -126,7 +127,9 @@ pub struct AppState {
     pub custom_success_message: Option<String>,
     pub strength_cache: Option<(Zeroizing<String>, StrengthResult)>,
     pub hibp_cache: std::collections::HashMap<u64, bool>,
+    pub hibp_pending: Option<(u64, std::sync::mpsc::Receiver<Result<bool, String>>, String)>,
     pub pending_exit: bool,
+    pub should_exit: bool,
 }
 
 #[cfg(test)]
@@ -138,12 +141,12 @@ mod tests {
         let entry = PasswordEntry {
             label: "example".into(),
             username: "alice".into(),
-            password: Zeroizing::new("hunter2".into()),
-            notes: "my note".into(),
-            totp_secret: Some("SECRET".into()),
+            password: Zeroizing::new("hunter2".to_string()),
+            notes: Zeroizing::new("my note".to_string()),
+            totp_secret: Zeroizing::new(Some("SECRET".to_string())),
             tags: Some(vec!["tag1".into(), "tag2".into()]),
             url: "https://example.com".into(),
-            custom_fields: vec![("key".into(), "value".into())],
+            custom_fields: Zeroizing::new(vec![("key".into(), "value".into())]),
             is_secure_note: false,
             created_at: Some(1234567890),
             totp_cache: None,

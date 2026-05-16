@@ -1,7 +1,8 @@
-use zeroize::Zeroize;
 use crate::app::AppState;
 use crate::file_ops::{create_file, load_store};
+use crate::strength::verify_password;
 use crate::theme;
+use zeroize::Zeroize;
 
 pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
@@ -18,16 +19,27 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
         .password(true)
         .build();
 
-    let button_label = if state.modals.master_is_create { "Create" } else { "Unlock" };
+    if state.modals.master_is_create {
+        ui.input_text("Confirm master password", &mut state.master_confirm_input)
+            .password(true)
+            .build();
+    }
+
+    let button_label = if state.modals.master_is_create {
+        "Create"
+    } else {
+        "Unlock"
+    };
 
     if state.vault.keyfile_hash.is_some() {
         ui.text("Your vault has a keyfile. Please press the button to select it.");
         if ui.button("Select keyfile") {
-            match crate::file_ops::load_keyfile(state){
+            match crate::file_ops::load_keyfile(state) {
                 Ok(_) => {
-                    state.custom_success_message = Some("Successfully selected keyfile!".to_string());
+                    state.custom_success_message =
+                        Some("Successfully selected keyfile!".to_string());
                     state.modals.show_success = true;
-                },
+                }
                 Err(error) => {
                     state.custom_error_message = Some(error);
                     return;
@@ -38,6 +50,19 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
 
     if ui.button(button_label) {
         if state.modals.master_is_create {
+            if state.master_input.is_empty() {
+                state.custom_error_message = Some("Master password cannot be empty.".to_string());
+                return;
+            }
+            if state.master_input.as_str() != state.master_confirm_input.as_str() {
+                state.custom_error_message =
+                    Some("Master password confirmation does not match.".to_string());
+                return;
+            }
+            if !verify_password(state.master_input.as_str()).is_empty() {
+                state.custom_error_message = Some("Choose a stronger master password: use at least 15 mixed characters or a 4+ word lowercase passphrase.".to_string());
+                return;
+            }
             let filename = state.filename_input.clone();
             match create_file(&filename, state) {
                 Ok(_) => {
@@ -45,6 +70,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
                     state.modals.show_success = true;
                     state.filename_input.clear();
                     state.master_input.zeroize();
+                    state.master_confirm_input.zeroize();
                     state.modals.master_is_create = false;
                     ui.close_current_popup();
                 }
@@ -53,13 +79,19 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
                 }
             }
         } else if state.vault.keyfile_hash.is_some() && state.vault.keyfile.is_none() {
-            state.custom_error_message = Some("Please select your keyfile before unlocking.".to_string());
+            state.custom_error_message =
+                Some("Please select your keyfile before unlocking.".to_string());
         } else if let Some(path) = &state.vault.file_path {
-            match load_store(path, &state.master_input, state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice())) {
+            match load_store(
+                path,
+                &state.master_input,
+                state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice()),
+            ) {
                 Ok((store, key)) => {
                     state.vault.store = Some(store);
                     state.vault.encryption_key = Some(key);
                     state.master_input.zeroize();
+                    state.master_confirm_input.zeroize();
                     ui.close_current_popup();
                 }
                 Err(e) => {
@@ -72,6 +104,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Cancel") {
         state.master_input.zeroize();
+        state.master_confirm_input.zeroize();
         state.modals.master_is_create = false;
         state.vault.file_path = None;
         state.vault.file_name.clear();

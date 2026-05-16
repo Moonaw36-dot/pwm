@@ -1,6 +1,4 @@
-use crate::models::{AppState, PasswordType};
-
-
+use crate::models::AppState;
 
 pub fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     if state.vault.store.is_none() {

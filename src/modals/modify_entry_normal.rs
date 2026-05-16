@@ -1,7 +1,7 @@
-use zeroize::Zeroizing;
 use crate::app::{AppState, PasswordEntry};
 use crate::modals::render_strength_bar;
 use crate::theme;
+use zeroize::Zeroizing;
 
 pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
@@ -14,14 +14,16 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Tag", &mut state.form.tag).build();
     ui.input_text("URL / Website", &mut state.form.url).build();
 
-    if state.form.is_secure_note{
+    if state.form.is_secure_note {
         state.form.username.clear();
         state.form.password = Zeroizing::new(String::new());
     }
 
-    if !state.form.is_secure_note{
+    if !state.form.is_secure_note {
         ui.input_text("Username", &mut state.form.username).build();
-        ui.input_text("Password", &mut state.form.password).password(true).build();
+        ui.input_text("Password", &mut state.form.password)
+            .password(true)
+            .build();
 
         let pw = state.form.password.clone();
         let strength = state.cached_strength(&pw);
@@ -41,19 +43,27 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         && let Some(idx) = state.edit_index
         && let Some(store) = &mut state.vault.store
     {
-        state.hibp_cache.remove(&crate::app::hash_password(store.entries[idx].password.as_str()));
+        state.hibp_cache.remove(&crate::app::hash_password(
+            store.entries[idx].password.as_str(),
+        ));
         store.entries[idx] = PasswordEntry {
             label: state.form.label.clone(),
             username: state.form.username.clone(),
             password: state.form.password.clone(),
             notes: state.form.notes.clone(),
             url: state.form.url.clone(),
-            totp_secret: crate::modals::modify_entry::sanitize_totp(std::mem::take(&mut state.form.totp)),
+            totp_secret: crate::modals::modify_entry::sanitize_totp(std::mem::replace(
+                &mut state.form.totp,
+                Zeroizing::new(String::new()),
+            ))
+            .into(),
             tags: crate::modals::modify_entry::parse_tags(std::mem::take(&mut state.form.tag)),
-            custom_fields: std::mem::take(&mut state.form.custom_fields)
-                .into_iter()
-                .filter(|(k, _)| !k.trim().is_empty())
-                .collect(),
+            custom_fields: Zeroizing::new(
+                std::mem::take(&mut *state.form.custom_fields)
+                    .into_iter()
+                    .filter(|(k, _)| !k.trim().is_empty())
+                    .collect::<Vec<_>>(),
+            ),
             is_secure_note: state.form.is_secure_note,
             created_at: store.entries[idx].created_at,
             totp_cache: None,
@@ -61,7 +71,8 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             number: store.entries[idx].number.clone(),
             expiration_date: store.entries[idx].expiration_date.clone(),
             cvc: store.entries[idx].cvc.clone(),
-        };        state.save();
+        };
+        state.save();
         state.edit_index = None;
         state.clear_inputs();
         ui.close_current_popup();

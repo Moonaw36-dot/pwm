@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
@@ -61,14 +61,18 @@ mod tests {
     fn test_config_serde_roundtrip() {
         let mut config = Config::default();
         config.lock_timeout_secs = 600;
-        config.keyfile_hashes.insert(PathBuf::from("/tmp/vault.aegis"), [42u8; 32]);
+        config
+            .keyfile_hashes
+            .insert(PathBuf::from("/tmp/vault.aegis"), [42u8; 32]);
 
         let json = serde_json::to_string_pretty(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.lock_timeout_secs, 600);
         assert_eq!(
-            deserialized.keyfile_hashes.get(PathBuf::from("/tmp/vault.aegis").as_path()),
+            deserialized
+                .keyfile_hashes
+                .get(PathBuf::from("/tmp/vault.aegis").as_path()),
             Some(&[42u8; 32])
         );
     }

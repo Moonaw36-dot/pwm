@@ -34,7 +34,4 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         state.clear_inputs();
         ui.close_current_popup()
     }
-    
-
-    
 }

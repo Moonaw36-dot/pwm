@@ -1,15 +1,19 @@
 use crate::models::AppState;
-use crate::{ui_tabs, theme};
+use crate::{theme, ui_tabs};
 
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
-    if let Some(clear_at) = state.clipboard.clear_at && std::time::Instant::now() >= clear_at {
+    if let Some(clear_at) = state.clipboard.clear_at
+        && std::time::Instant::now() >= clear_at
+    {
         if let Some(ref mut handle) = state.clipboard.handle {
             crate::clipboard::set_excluded_from_history(handle, "");
         }
         state.clipboard.clear_at = None;
     }
 
-    if let Some(clear_at) = state.clipboard.copied_clear_at && std::time::Instant::now() >= clear_at {
+    if let Some(clear_at) = state.clipboard.copied_clear_at
+        && std::time::Instant::now() >= clear_at
+    {
         state.clipboard.copied_clear_at = None;
         state.clipboard.copied_field = None;
     }
@@ -42,9 +46,9 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     if ui.menu_item("Close") {
                         state.close_file();
                     }
-                    if ui.menu_item("Add a key-file") && state.vault.keyfile.is_none(){
-                        match crate::file_ops::create_key_file(state){
-                            Ok(_) => { }
+                    if ui.menu_item("Add a key-file") && state.vault.keyfile.is_none() {
+                        match crate::file_ops::create_key_file(state) {
+                            Ok(_) => {}
                             Err(error) => {
                                 state.custom_error_message = Some(error);
                             }
@@ -63,8 +67,9 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
                     }
                     if ui.menu_item("Export to CSV")
                         && let Some(store) = &state.vault.store
-                        && let Err(e) = crate::file_ops::export_csv(store) {
-                            state.custom_error_message = Some(e);
+                        && let Err(e) = crate::file_ops::export_csv(store)
+                    {
+                        state.custom_error_message = Some(e);
                     }
                     ui.separator();
                     if ui.menu_item("Settings") {
@@ -166,7 +171,6 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::success_modal(ui, state);
     }
 
-
     if state.modals.filename {
         ui.open_popup("Create new file");
         state.modals.filename = false;
@@ -223,8 +227,6 @@ pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(_token) = ui.begin_modal_popup("Delete entry") {
         crate::modals::confirm_delete_modal(ui, state);
     }
-
-
 
     if state.custom_error_message.is_some() {
         ui.open_popup("Error modal");

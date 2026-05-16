@@ -35,26 +35,46 @@ pub fn apply(style: &mut imgui::Style) {
             c[i] = color;
         }
     };
-    set(c, imgui::StyleColor::WindowBg,          [0.06, 0.06, 0.10, 1.0]);
-    set(c, imgui::StyleColor::ModalWindowDimBg,  [0.00, 0.00, 0.00, 0.35]);
-    set(c, imgui::StyleColor::TitleBgActive,     [0.06, 0.06, 0.10, 1.0]);
-    set(c, imgui::StyleColor::FrameBg,           [0.10, 0.10, 0.15, 1.0]);
-    set(c, imgui::StyleColor::FrameBgHovered,    [0.15, 0.15, 0.20, 1.0]);
-    set(c, imgui::StyleColor::FrameBgActive,     [0.20, 0.20, 0.26, 1.0]);
-    set(c, imgui::StyleColor::Button,            [0.13, 0.13, 0.18, 1.0]);
-    set(c, imgui::StyleColor::ButtonHovered,     [0.30, 0.30, 0.36, 1.0]);
-    set(c, imgui::StyleColor::ButtonActive,      [0.60, 0.60, 0.65, 1.0]);
-    set(c, imgui::StyleColor::SliderGrab,        [0.35, 0.45, 0.60, 1.0]);
-    set(c, imgui::StyleColor::SliderGrabActive,  [0.45, 0.55, 0.70, 1.0]);
-    set(c, imgui::StyleColor::CheckMark,         [0.45, 0.55, 0.70, 1.0]);
-    set(c, imgui::StyleColor::Tab,               [0.06, 0.06, 0.12, 1.0]);
-    set(c, imgui::StyleColor::TabActive,         [0.12, 0.16, 0.28, 1.0]);
-    set(c, imgui::StyleColor::TabHovered,        [0.10, 0.12, 0.20, 1.0]);
-    set(c, imgui::StyleColor::Border,            [0.10, 0.10, 0.16, 1.0]);
-    set(c, imgui::StyleColor::Separator,         [0.14, 0.14, 0.22, 1.0]);
-    set(c, imgui::StyleColor::MenuBarBg,         [0.06, 0.06, 0.12, 0.9]);
-    set(c, imgui::StyleColor::HeaderHovered,     [0.15, 0.15, 0.22, 1.0]);
-    set(c, imgui::StyleColor::ResizeGrip,        [0.20, 0.20, 0.30, 1.0]);
-    set(c, imgui::StyleColor::ResizeGripActive,  [0.35, 0.35, 0.50, 1.0]);
-    set(c, imgui::StyleColor::ResizeGripHovered, [0.25, 0.25, 0.38, 1.0]);
+    set(c, imgui::StyleColor::WindowBg, [0.06, 0.06, 0.10, 1.0]);
+    set(
+        c,
+        imgui::StyleColor::ModalWindowDimBg,
+        [0.00, 0.00, 0.00, 0.35],
+    );
+    set(c, imgui::StyleColor::TitleBgActive, [0.06, 0.06, 0.10, 1.0]);
+    set(c, imgui::StyleColor::FrameBg, [0.10, 0.10, 0.15, 1.0]);
+    set(
+        c,
+        imgui::StyleColor::FrameBgHovered,
+        [0.15, 0.15, 0.20, 1.0],
+    );
+    set(c, imgui::StyleColor::FrameBgActive, [0.20, 0.20, 0.26, 1.0]);
+    set(c, imgui::StyleColor::Button, [0.13, 0.13, 0.18, 1.0]);
+    set(c, imgui::StyleColor::ButtonHovered, [0.30, 0.30, 0.36, 1.0]);
+    set(c, imgui::StyleColor::ButtonActive, [0.60, 0.60, 0.65, 1.0]);
+    set(c, imgui::StyleColor::SliderGrab, [0.35, 0.45, 0.60, 1.0]);
+    set(
+        c,
+        imgui::StyleColor::SliderGrabActive,
+        [0.45, 0.55, 0.70, 1.0],
+    );
+    set(c, imgui::StyleColor::CheckMark, [0.45, 0.55, 0.70, 1.0]);
+    set(c, imgui::StyleColor::Tab, [0.06, 0.06, 0.12, 1.0]);
+    set(c, imgui::StyleColor::TabActive, [0.12, 0.16, 0.28, 1.0]);
+    set(c, imgui::StyleColor::TabHovered, [0.10, 0.12, 0.20, 1.0]);
+    set(c, imgui::StyleColor::Border, [0.10, 0.10, 0.16, 1.0]);
+    set(c, imgui::StyleColor::Separator, [0.14, 0.14, 0.22, 1.0]);
+    set(c, imgui::StyleColor::MenuBarBg, [0.06, 0.06, 0.12, 0.9]);
+    set(c, imgui::StyleColor::HeaderHovered, [0.15, 0.15, 0.22, 1.0]);
+    set(c, imgui::StyleColor::ResizeGrip, [0.20, 0.20, 0.30, 1.0]);
+    set(
+        c,
+        imgui::StyleColor::ResizeGripActive,
+        [0.35, 0.35, 0.50, 1.0],
+    );
+    set(
+        c,
+        imgui::StyleColor::ResizeGripHovered,
+        [0.25, 0.25, 0.38, 1.0],
+    );
 }
