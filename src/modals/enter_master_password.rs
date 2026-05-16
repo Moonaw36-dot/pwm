@@ -108,6 +108,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
         state.modals.master_is_create = false;
         state.vault.file_path = None;
         state.vault.file_name.clear();
+        state.vault.filesize = None;
         state.filename_input.clear();
         ui.close_current_popup();
     }

@@ -44,6 +44,7 @@ pub struct PasswordList {
 pub struct Vault {
     pub file_name: String,
     pub file_path: Option<PathBuf>,
+    pub filesize: Option<u64>,
     pub store: Option<PasswordList>,
     pub encryption_key: Option<Zeroizing<[u8; 32]>>,
     pub last_activity: Instant,

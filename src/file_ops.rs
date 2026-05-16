@@ -72,6 +72,7 @@ pub fn open_file_dialog() -> Option<(String, PathBuf)> {
         .pick_file()?;
 
     let name = path.file_name()?.to_string_lossy().to_string();
+
     Some((name, path))
 }
 

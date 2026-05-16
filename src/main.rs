@@ -23,7 +23,7 @@ use glutin::{
 use glutin_winit::DisplayBuilder;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use raw_window_handle::HasRawWindowHandle;
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, path::Path};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::{
     event::{Event, WindowEvent},
@@ -44,6 +44,10 @@ impl imgui::ClipboardBackend for ArboardClipboard {
     fn set(&mut self, value: &str) {
         let _ = self.0.set_text(value);
     }
+}
+
+fn get_current_filesize(file: &Path) -> Option<u64> {
+    file.metadata().ok().map(|m| m.len())
 }
 
 fn main() {
@@ -231,9 +235,19 @@ fn main() {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => {
-                    if state.vault.store.is_some() {
-                        state.modals.confirm_unsaved = true;
-                        state.pending_exit = true;
+                    if state.vault.store.is_some() && state.vault.filesize.is_some() {
+                        if state
+                            .vault
+                            .file_path
+                            .as_deref()
+                            .and_then(get_current_filesize)
+                            != state.vault.filesize
+                        {
+                            state.modals.confirm_unsaved = true;
+                            state.pending_exit = true;
+                        } else {
+                            target.exit();
+                        }
                     } else {
                         target.exit();
                     }
