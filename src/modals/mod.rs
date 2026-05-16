@@ -104,7 +104,7 @@ pub(crate) fn render_card_fields(ui: &imgui::Ui, state: &mut AppState) {
         .chars_decimal(true)
         .build()
     {
-        state.form.number.truncate(19);
+        state.form.number.truncate(16);
     }
 
     let card = state.form.number.as_str();

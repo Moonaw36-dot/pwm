@@ -52,7 +52,7 @@
 - [ ] **Undo delete / trash** — soft-delete entries into a trash folder; restore from trash or permanently delete on vault close.
 - [ ] **Password history per entry** — store timestamped SHA-256 hashes of previous passwords; display change timeline in the modify modal.
 - [ ] **Quick-open (Ctrl+P)** — fuzzy-finder overlay bar to search and jump to any entry by label, URL, or username without clicking tabs.
-- [ ] **Entry templates** — preset forms for common types: credit card, identity, bank account, server/SSH key, Wi-Fi network.
+- [X] **Entry templates** — preset forms for common types: credit card, identity, bank account, server/SSH key, Wi-Fi network.
 - [ ] **Light theme toggle** — switchable light mode alongside the existing dark theme.
 - [ ] **Offline HIBP corpus** — option to download the full HIBP password corpus so compromised-password checks work without internet access.
 - [ ] **Emergency sheet export** — generate a printable PDF with all entries (label, username, password, URL, notes) for offline emergency access.
