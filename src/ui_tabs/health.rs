@@ -143,20 +143,11 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                     ));
                     ui.same_line();
                     if ui.button(format!("Modify##pwned{}", idx)) {
-                        state.form.label = entry.label.clone();
-                        state.form.username = entry.username.clone();
-                        state.form.password = entry.password.clone();
-                        state.form.notes = Zeroizing::new(entry.notes.to_string());
-                        state.form.totp = Zeroizing::new(
-                            entry.totp_secret.as_deref().unwrap_or_default().to_owned(),
+                        crate::modals::copy_entry_to_form(
+                            &mut state.form,
+                            entry.password_type,
+                            entry,
                         );
-                        state.form.url = entry.url.clone();
-                        state.form.tag = entry
-                            .tags
-                            .as_deref()
-                            .map(|t| t.join(", "))
-                            .unwrap_or_default();
-                        state.form.custom_fields = entry.custom_fields.clone();
                         state.edit_index = Some(idx);
                     }
                 }

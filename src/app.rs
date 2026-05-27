@@ -1,80 +1,154 @@
 use crate::file_ops::{open_file_dialog, save_store};
-use crate::models::PasswordType;
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
+use crate::models::{ClipboardState, EntryForm, Generator, Modals, PasswordType, Vault};
 use crate::strength::{StrengthResult, manual_strength};
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
+const INPUT_CAPACITY: usize = 256;
+const CLIPBOARD_CLEAR_SECS: u64 = 10;
+const COPIED_NOTICE_SECS: u64 = 3;
+
+impl Vault {
+    fn new() -> Self {
+        Self {
+            file_name: String::new(),
+            file_path: None,
+            filesize: None,
+            store: None,
+            encryption_key: None,
+            last_activity: Instant::now(),
+            lock_timeout_secs: crate::config::load().lock_timeout_secs,
+            keyfile: None,
+            keyfile_hash: None,
+            keyfile_bytes: None,
+        }
+    }
+}
+
+impl EntryForm {
+    fn new() -> Self {
+        Self {
+            label: String::with_capacity(INPUT_CAPACITY),
+            username: String::with_capacity(INPUT_CAPACITY),
+            password: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
+            notes: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
+            totp: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
+            url: String::with_capacity(INPUT_CAPACITY),
+            tag: String::with_capacity(INPUT_CAPACITY),
+            custom_fields: Zeroizing::new(Vec::new()),
+            password_type: PasswordType::Normal,
+            is_secure_note: false,
+            number: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
+            expiration_date: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
+            cvc: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
+        }
+    }
+
+    fn clear(&mut self) {
+        *self = Self::new();
+    }
+}
+
+impl Generator {
+    fn new() -> Self {
+        Self {
+            mode: crate::strength::GenMode::Password,
+            length: 24,
+            uppercase: true,
+            lowercase: true,
+            numbers: true,
+            special: true,
+            ambiguous: true,
+            word_count: 5,
+            separator: String::from("-"),
+        }
+    }
+}
+
+impl Modals {
+    fn new() -> Self {
+        Self {
+            add_password: false,
+            close_add_password: false,
+            settings: false,
+            error_password: false,
+            warning_password: false,
+            gen_password: false,
+            gen_from_add: false,
+            filename: false,
+            master: false,
+            master_is_create: false,
+            confirm_delete: false,
+            show_success: false,
+            confirm_unsaved: false,
+        }
+    }
+}
+
+impl ClipboardState {
+    fn new() -> Self {
+        Self {
+            handle: arboard::Clipboard::new()
+                .map_err(|_| {
+                    log::warn!("System clipboard unavailable; clipboard operations disabled")
+                })
+                .ok(),
+            clear_at: None,
+            copied_field: None,
+            copied_clear_at: None,
+        }
+    }
+
+    fn clear_clipboard_text(&mut self) {
+        if let Some(ref mut handle) = self.handle {
+            crate::clipboard::set_excluded_from_history(handle, "");
+        }
+    }
+
+    pub fn clear_expired(&mut self, now: Instant) {
+        if self.clear_at.is_some_and(|clear_at| now >= clear_at) {
+            self.clear_clipboard_text();
+            self.clear_at = None;
+        }
+
+        if self.copied_clear_at.is_some_and(|clear_at| now >= clear_at) {
+            self.copied_clear_at = None;
+            self.copied_field = None;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.clear_clipboard_text();
+        self.clear_at = None;
+        self.copied_field = None;
+        self.copied_clear_at = None;
+    }
+
+    fn copy(&mut self, text: &str, field_name: &str) {
+        if let Some(ref mut handle) = self.handle {
+            crate::clipboard::set_excluded_from_history(handle, text);
+        }
+
+        let now = Instant::now();
+        self.clear_at = Some(now + Duration::from_secs(CLIPBOARD_CLEAR_SECS));
+        self.copied_field = Some(field_name.to_string());
+        self.copied_clear_at = Some(now + Duration::from_secs(COPIED_NOTICE_SECS));
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {
-            vault: crate::models::Vault {
-                file_name: String::new(),
-                file_path: None,
-                filesize: None,
-                store: None,
-                encryption_key: None,
-                last_activity: Instant::now(),
-                lock_timeout_secs: crate::config::load().lock_timeout_secs,
-                keyfile: None,
-                keyfile_hash: None,
-                keyfile_bytes: None,
-            },
-            form: crate::models::EntryForm {
-                label: String::with_capacity(256),
-                username: String::with_capacity(256),
-                password: Zeroizing::new(String::with_capacity(256)),
-                notes: Zeroizing::new(String::with_capacity(256)),
-                totp: Zeroizing::new(String::with_capacity(256)),
-                url: String::with_capacity(256),
-                tag: String::with_capacity(256),
-                is_secure_note: false,
-                number: Zeroizing::new(String::with_capacity(256)),
-                expiration_date: Default::default(),
-                custom_fields: Zeroizing::new(Vec::new()),
-                password_type: PasswordType::Normal,
-                cvc: Default::default(),
-            },
-            generator: crate::models::Generator {
-                mode: crate::strength::GenMode::Password,
-                length: 24,
-                uppercase: true,
-                lowercase: true,
-                numbers: true,
-                special: true,
-                ambiguous: true,
-                word_count: 5,
-                separator: String::from("-"),
-            },
-            modals: crate::models::Modals {
-                add_password: false,
-                close_add_password: false,
-                settings: false,
-                error_password: false,
-                warning_password: false,
-                gen_password: false,
-                gen_from_add: false,
-                filename: false,
-                master: false,
-                master_is_create: false,
-                confirm_delete: false,
-                show_success: false,
-                confirm_unsaved: false,
-            },
-            clipboard: crate::models::ClipboardState {
-                handle: arboard::Clipboard::new()
-                    .map_err(|_| {
-                        log::warn!("System clipboard unavailable; clipboard operations disabled")
-                    })
-                    .ok(),
-                clear_at: None,
-                copied_field: None,
-                copied_clear_at: None,
-            },
+            vault: Vault::new(),
+            form: EntryForm::new(),
+            generator: Generator::new(),
+            modals: Modals::new(),
+            clipboard: ClipboardState::new(),
 
             has_chosen_type: false,
-            search: String::with_capacity(256),
-            filename_input: String::with_capacity(256),
+            search: String::with_capacity(INPUT_CAPACITY),
+            filename_input: String::with_capacity(INPUT_CAPACITY),
             master_input: Zeroizing::new(String::new()),
             master_confirm_input: Zeroizing::new(String::new()),
             settings_timeout_mins: 0,
@@ -116,30 +190,13 @@ impl AppState {
         self.strength_cache = None;
         self.edit_index = None;
         self.delete_idx = None;
-        if let Some(ref mut handle) = self.clipboard.handle {
-            crate::clipboard::set_excluded_from_history(handle, "");
-        }
-        self.clipboard.clear_at = None;
-        self.clipboard.copied_field = None;
-        self.clipboard.copied_clear_at = None;
+        self.clipboard.reset();
         self.hibp_cache.clear();
         self.hibp_pending = None;
     }
 
     pub fn clear_inputs(&mut self) {
-        self.form.password = Zeroizing::new(String::new());
-        self.form.custom_fields.clear();
-        self.form.url.clear();
-        self.form.label.clear();
-        self.form.username.clear();
-        self.form.notes = Zeroizing::new(String::new());
-        self.form.tag.clear();
-        self.form.totp = Zeroizing::new(String::new());
-        self.form.number = Zeroizing::new(String::new());
-        self.form.expiration_date = Zeroizing::new(String::new());
-        self.form.cvc = Zeroizing::new(String::new());
-        self.form.is_secure_note = false;
-        self.form.password_type = PasswordType::Normal;
+        self.form.clear();
         self.has_chosen_type = false;
     }
 
@@ -155,12 +212,7 @@ impl AppState {
     }
 
     pub fn copy_to_clipboard(&mut self, text: &str, field_name: &str) {
-        if let Some(ref mut handle) = self.clipboard.handle {
-            crate::clipboard::set_excluded_from_history(handle, text);
-        }
-        self.clipboard.clear_at = Some(Instant::now() + Duration::from_secs(10));
-        self.clipboard.copied_field = Some(field_name.to_string());
-        self.clipboard.copied_clear_at = Some(Instant::now() + Duration::from_secs(3));
+        self.clipboard.copy(text, field_name);
     }
 
     pub fn save_result(&mut self) -> Result<(), String> {

@@ -29,7 +29,7 @@ pub use success::success_modal;
 pub use warning::warning_modal;
 
 use crate::app::{AppState, PasswordEntry};
-use crate::models::PasswordType;
+use crate::models::{EntryForm, PasswordType};
 use crate::strength::{StrengthResult, get_card_issuer};
 use crate::theme;
 use zeroize::Zeroizing;
@@ -132,11 +132,7 @@ pub(crate) fn render_card_fields(ui: &imgui::Ui, state: &mut AppState) {
             .filter(|c| c.is_ascii_digit())
             .collect();
         digits.truncate(4);
-        if digits.len() >= 3 {
-            state.form.expiration_date = format!("{}/{}", &digits[..2], &digits[2..]).into();
-        } else {
-            state.form.expiration_date = digits.into();
-        }
+        state.form.expiration_date = digits.into();
     }
 
     if ui
@@ -178,29 +174,34 @@ pub(crate) fn render_custom_fields_editor(
     }
 }
 
-pub(crate) fn copy_entries(state: &mut AppState, pw_type: PasswordType, entry: &PasswordEntry) {
+pub(crate) fn copy_entry_to_form(
+    form: &mut EntryForm,
+    pw_type: PasswordType,
+    entry: &PasswordEntry,
+) {
+    form.label = entry.label.clone();
+    form.username = entry.username.clone();
+    form.password = entry.password.clone();
+    form.notes = Zeroizing::new(entry.notes.to_string());
+    form.totp = Zeroizing::new(entry.totp_secret.as_deref().unwrap_or_default().to_owned());
+    form.url = entry.url.clone();
+    form.tag = entry
+        .tags
+        .as_deref()
+        .map(|t| t.join(", "))
+        .unwrap_or_default();
+    form.custom_fields = entry.custom_fields.clone();
+    form.password_type = pw_type;
+    form.is_secure_note = entry.is_secure_note;
+    form.number = Zeroizing::new(String::new());
+    form.cvc = Zeroizing::new(String::new());
+    form.expiration_date = Zeroizing::new(String::new());
+
     match pw_type {
-        PasswordType::Normal => {
-            state.form.label = entry.label.clone();
-            state.form.is_secure_note = entry.is_secure_note;
-            state.form.username = entry.username.clone();
-            state.form.password = entry.password.clone();
-            state.form.notes = Zeroizing::new(entry.notes.to_string());
-            state.form.totp =
-                Zeroizing::new(entry.totp_secret.as_deref().unwrap_or_default().to_owned());
-            state.form.url = entry.url.clone();
-            state.form.tag = entry
-                .tags
-                .as_deref()
-                .map(|t| t.join(", "))
-                .unwrap_or_default();
-            state.form.custom_fields = entry.custom_fields.clone();
-            state.edit_index = None;
-        }
         PasswordType::Card => {
-            state.form.number = entry.number.clone().unwrap_or_default();
-            state.form.cvc = entry.cvc.clone().unwrap_or_default();
-            state.form.expiration_date = entry.expiration_date.clone().unwrap_or_default();
+            form.number = entry.number.clone().unwrap_or_default();
+            form.cvc = entry.cvc.clone().unwrap_or_default();
+            form.expiration_date = entry.expiration_date.clone().unwrap_or_default();
         }
         _ => {}
     }

@@ -75,17 +75,41 @@ pub fn haveibeenpwned(password: &str) -> Result<bool, String> {
     }))
 }
 
-pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
-    let words: Vec<&str> = password
+fn password_words(password: &str) -> Vec<&str> {
+    password
         .split(|c: char| !c.is_ascii_alphabetic())
         .filter(|s| !s.is_empty())
-        .collect();
-    let is_passphrase = words.len() >= 2
+        .collect()
+}
+
+fn looks_like_passphrase(words: &[&str]) -> bool {
+    words.len() >= 2
         && words
             .iter()
-            .all(|w| w.chars().all(|c| c.is_ascii_lowercase()));
+            .all(|word| word.chars().all(|c| c.is_ascii_lowercase()))
+}
 
-    if is_passphrase {
+fn password_pool_size(password: &str) -> f64 {
+    let mut pool = 0.0f64;
+    if password.chars().any(|c| c.is_ascii_lowercase()) {
+        pool += 26.0;
+    }
+    if password.chars().any(|c| c.is_ascii_uppercase()) {
+        pool += 26.0;
+    }
+    if password.chars().any(|c| c.is_ascii_digit()) {
+        pool += 10.0;
+    }
+    if password.chars().any(|c| !c.is_ascii_alphanumeric()) {
+        pool += 32.0;
+    }
+
+    if pool == 0.0 { 26.0 } else { pool }
+}
+
+pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
+    let words = password_words(password);
+    if looks_like_passphrase(&words) {
         if words.len() < MIN_PASSPHRASE_WORDS {
             return vec![PasswordSafety::TooFewWords];
         }
@@ -175,37 +199,13 @@ pub fn manual_strength(password: &str) -> StrengthResult {
         return (0, "—", [0.45, 0.45, 0.45, 1.0]);
     }
 
-    let words: Vec<&str> = password
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let looks_like_passphrase = words.len() >= 2
-        && words
-            .iter()
-            .all(|w| w.chars().all(|c| c.is_ascii_lowercase()));
-
-    if looks_like_passphrase {
+    let words = password_words(password);
+    if looks_like_passphrase(&words) {
         let wordlist_size = WORDLIST.lines().filter(|l| !l.is_empty()).count() as f64;
         return bits_to_strength(words.len() as f64 * wordlist_size.log2());
     }
 
-    let mut pool = 0.0f64;
-    if password.chars().any(|c| c.is_ascii_lowercase()) {
-        pool += 26.0;
-    }
-    if password.chars().any(|c| c.is_ascii_uppercase()) {
-        pool += 26.0;
-    }
-    if password.chars().any(|c| c.is_ascii_digit()) {
-        pool += 10.0;
-    }
-    if password.chars().any(|c| !c.is_ascii_alphanumeric()) {
-        pool += 32.0;
-    }
-    if pool == 0.0 {
-        pool = 26.0;
-    }
-    bits_to_strength(password.len() as f64 * pool.log2())
+    bits_to_strength(password.len() as f64 * password_pool_size(password).log2())
 }
 
 #[cfg(test)]

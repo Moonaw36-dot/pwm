@@ -17,10 +17,17 @@ pub fn sanitize_totp(s: impl AsRef<str>) -> Option<String> {
 }
 
 pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
-    let entries = &state.vault.store.as_ref().unwrap().entries;
-    let entry = entries[state.edit_index.unwrap()].clone();
+    let Some(entry_type) = state
+        .edit_index
+        .and_then(|idx| state.vault.store.as_ref()?.entries.get(idx))
+        .map(|entry| entry.password_type)
+    else {
+        state.edit_index = None;
+        ui.close_current_popup();
+        return;
+    };
 
-    match entry.password_type {
+    match entry_type {
         PasswordType::Normal => render(ui, state),
         PasswordType::Card => crate::modals::modify_entry_card::render(ui, state),
         _ => {}

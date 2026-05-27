@@ -90,6 +90,26 @@ fn save_csv_dialog() -> Option<PathBuf> {
         .save_file()
 }
 
+fn header_index(headers: &csv::StringRecord, names: &[&str]) -> Option<usize> {
+    names.iter().find_map(|name| {
+        headers
+            .iter()
+            .position(|header| header.eq_ignore_ascii_case(name))
+    })
+}
+
+fn record_value(record: &csv::StringRecord, idx: Option<usize>) -> String {
+    idx.and_then(|i| record.get(i))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn optional_record_value(record: &csv::StringRecord, idx: Option<usize>) -> Option<String> {
+    let value = record_value(record, idx);
+    if value.is_empty() { None } else { Some(value) }
+}
+
 pub fn import_csv() -> Result<Option<PasswordList>, String> {
     let Some(path) = open_csv_dialog() else {
         return Ok(None);
@@ -97,46 +117,28 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
     let mut reader = csv::Reader::from_path(path).map_err(|e| e.to_string())?;
 
     let headers = reader.headers().map_err(|e| e.to_string())?.clone();
-    let col = |name: &str| headers.iter().position(|h| h.eq_ignore_ascii_case(name));
-
-    let idx_label = col("label")
-        .or_else(|| col("name"))
-        .or_else(|| col("title"));
-    let idx_username = col("username").or_else(|| col("login").or_else(|| col("email")));
-    let idx_password = col("password").or_else(|| col("pass"));
-    let idx_url = col("url").or_else(|| col("website").or_else(|| col("site")));
-    let idx_notes = col("notes").or_else(|| col("note").or_else(|| col("comment")));
-    let idx_tags = col("tags").or_else(|| col("tag"));
-    let idx_totp = col("totp_secret").or_else(|| col("totp").or_else(|| col("otp")));
-
-    let get = |r: &csv::StringRecord, idx: Option<usize>| -> String {
-        idx.and_then(|i| r.get(i)).unwrap_or("").trim().to_string()
-    };
+    let idx_label = header_index(&headers, &["label", "name", "title"]);
+    let idx_username = header_index(&headers, &["username", "login", "email"]);
+    let idx_password = header_index(&headers, &["password", "pass"]);
+    let idx_url = header_index(&headers, &["url", "website", "site"]);
+    let idx_notes = header_index(&headers, &["notes", "note", "comment"]);
+    let idx_tags = header_index(&headers, &["tags", "tag"]);
+    let idx_totp = header_index(&headers, &["totp_secret", "totp", "otp"]);
 
     let mut entries = Vec::new();
     for result in reader.records() {
         let record = result.map_err(|e| e.to_string())?;
 
-        let tags_raw = get(&record, idx_tags);
-        let tags = if tags_raw.is_empty() {
-            None
-        } else {
-            Some(tags_raw.split(';').map(|s| s.trim().to_string()).collect())
-        };
-
-        let totp_raw = get(&record, idx_totp);
-        let totp_secret = if totp_raw.is_empty() {
-            None
-        } else {
-            Some(totp_raw)
-        };
+        let tags = optional_record_value(&record, idx_tags)
+            .map(|tags| tags.split(';').map(|s| s.trim().to_string()).collect());
+        let totp_secret = optional_record_value(&record, idx_totp);
 
         entries.push(PasswordEntry {
-            label: get(&record, idx_label),
-            username: get(&record, idx_username),
-            password: Zeroizing::new(get(&record, idx_password)),
-            url: get(&record, idx_url),
-            notes: Zeroizing::new(get(&record, idx_notes)),
+            label: record_value(&record, idx_label),
+            username: record_value(&record, idx_username),
+            password: Zeroizing::new(record_value(&record, idx_password)),
+            url: record_value(&record, idx_url),
+            notes: Zeroizing::new(record_value(&record, idx_notes)),
             tags,
             totp_secret: totp_secret.into(),
             custom_fields: Zeroizing::new(Vec::new()),
@@ -523,26 +525,17 @@ pub fn load_store(
         .map_err(|_| "Invalid nonce".to_string())?;
     let ciphertext = &data[HEADER_LEN..];
 
-    if let Some(result) = try_decrypt(
-        password,
-        &salt,
-        &nonce_bytes,
-        ciphertext,
-        false,
-        keyfile_bytes,
-    ) {
-        return Ok(result);
-    }
-
-    if let Some(result) = try_decrypt(
-        password,
-        &salt,
-        &nonce_bytes,
-        ciphertext,
-        true,
-        keyfile_bytes,
-    ) {
-        return Ok(result);
+    for legacy in [false, true] {
+        if let Some(result) = try_decrypt(
+            password,
+            &salt,
+            &nonce_bytes,
+            ciphertext,
+            legacy,
+            keyfile_bytes,
+        ) {
+            return Ok(result);
+        }
     }
 
     Err("Decryption failed: wrong master password or corrupted file".to_string())

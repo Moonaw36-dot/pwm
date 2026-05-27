@@ -4,8 +4,8 @@ use crate::modals::add_entry_from_inputs;
 const STANDARD_CARD_LEN: usize = 16;
 const AMEX_CARD_LEN: usize = 15;
 
-const STANDARD_CVC_LEN: usize = 3;
-const AMEX_CVC_LEN: usize = 4;
+pub const STANDARD_CVC_LEN: usize = 3;
+pub const AMEX_CVC_LEN: usize = 4;
 
 const EXPIRY_LEN: usize = 4;
 
@@ -32,7 +32,7 @@ fn is_amex(number: &str) -> bool {
     number.len() == AMEX_CARD_LEN
 }
 
-fn expected_cvc_len(number: &str) -> usize {
+pub fn expected_cvc_len(number: &str) -> usize {
     if is_amex(number) {
         AMEX_CVC_LEN
     } else {
@@ -40,7 +40,8 @@ fn expected_cvc_len(number: &str) -> usize {
     }
 }
 
-fn validate_expiry(expiry: &str) -> bool {
+pub fn validate_expiry(expiry: &str) -> bool {
+    let expiry: String = expiry.chars().filter(|c| c.is_ascii_digit()).collect();
     if expiry.len() != EXPIRY_LEN {
         return false;
     }
@@ -52,34 +53,41 @@ fn validate_expiry(expiry: &str) -> bool {
         Ok(y) => y,
         Err(_) => return false,
     };
-    // Month must be 01–12, year must be a valid 2-digit year
     month >= 1 && month <= 12 && year <= 99
 }
 
-fn validate_card_form(state: &mut AppState) -> Result<(), &'static str> {
-    if state.form.number.is_empty()
-        || state.form.expiration_date.is_empty()
-        || state.form.cvc.is_empty()
-    {
+pub(crate) fn validate_card_fields(
+    number: &str,
+    expiration_date: &str,
+    cvc: &str,
+) -> Result<(), &'static str> {
+    if number.is_empty() || expiration_date.is_empty() || cvc.is_empty() {
         return Err("Card details are required");
     }
 
-    let valid_length =
-        state.form.number.len() == STANDARD_CARD_LEN || state.form.number.len() == AMEX_CARD_LEN;
+    let valid_length = number.len() == STANDARD_CARD_LEN || number.len() == AMEX_CARD_LEN;
 
-    if !valid_length || !luhn_check(state.form.number.as_str()) {
+    if !valid_length || !luhn_check(number) {
         return Err("Invalid card number");
     }
 
-    if !validate_expiry(state.form.expiration_date.as_str()) {
+    if !validate_expiry(expiration_date) {
         return Err("Invalid expiration date (expected MMYY)");
     }
 
-    if state.form.cvc.len() != expected_cvc_len(state.form.number.as_str()) {
+    if cvc.len() != expected_cvc_len(number) {
         return Err("Invalid CVC");
     }
 
     Ok(())
+}
+
+fn validate_card_form(state: &AppState) -> Result<(), &'static str> {
+    validate_card_fields(
+        state.form.number.as_str(),
+        state.form.expiration_date.as_str(),
+        state.form.cvc.as_str(),
+    )
 }
 
 pub fn render(ui: &imgui::Ui, state: &mut AppState) {

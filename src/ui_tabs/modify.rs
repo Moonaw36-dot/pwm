@@ -9,7 +9,7 @@ pub fn render_modify_tab(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Modify passwords.");
 
     if let Some((idx, entry)) = crate::modals::render_entries_list(ui, state, "Modify") {
-        crate::modals::copy_entries(state, entry.password_type, &entry);
+        crate::modals::copy_entry_to_form(&mut state.form, entry.password_type, &entry);
         state.edit_index = Some(idx as usize);
     }
 }
