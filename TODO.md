@@ -40,11 +40,11 @@
 
 ## Feature Gaps
 
-- [ ] **Cloud sync (WebDAV / Nextcloud)** — sync the `.aegis` vault file to a remote WebDAV or Nextcloud endpoint so the vault stays available across machines without manual file copy.
+- [ ] **Cloud sync (WebDAV / Nextcloud)** — sync the `.aegis` vault file to a remote WebDAV or Nextcloud endpoint so the vault stays available acroile copy.
 - [ ] **Browser extension native messaging** — implement the native messaging host protocol so a companion browser extension can read entries and auto-fill credentials in the browser.
-- [ ] **Recent files list** — File menu lists last 5 recently opened vaults with absolute paths for quick re-open.
+- [ ] **Recent files list** pile menu lists last 5 recently opened vaults with absolute paths for quick re-open.
 - [ ] **Automatic timed backups** — on each save, copy the vault file to a configurable backup directory with a timestamp suffix.
-- [ ] **Entry grouping / folders** — hierarchical folder tree alongside the flat list, with drag-and-drop to organize entries.
+- [ ] **Entry grouping / olders** — hierarchical folder tree alongside the flat list, with drag-and-drop to organize entries.
 - [ ] **Favorites / pinning** — starred entries float to the top of the view list and appear in a separate "Favorites" section.
 
 ## Quality-of-Life

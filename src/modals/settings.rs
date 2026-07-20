@@ -26,10 +26,14 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.separator();
 
+    ui.checkbox("Light mode", &mut state.settings_light_mode);
+
     if ui.button("Save") {
         state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
+        state.light_mode = state.settings_light_mode;
 
         let mut config = crate::config::load();
+        config.light_mode = state.light_mode;
         config.lock_timeout_secs = state.vault.lock_timeout_secs;
 
         if let Err(e) = crate::config::save(&config) {

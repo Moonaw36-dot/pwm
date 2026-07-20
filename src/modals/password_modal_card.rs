@@ -49,11 +49,11 @@ pub fn validate_expiry(expiry: &str) -> bool {
         Ok(m) => m,
         Err(_) => return false,
     };
-    let year: u32 = match expiry[2..].parse() {
+    let _year: u32 = match expiry[2..].parse() {
         Ok(y) => y,
         Err(_) => return false,
     };
-    month >= 1 && month <= 12 && year <= 99
+    (1..=12).contains(&month)
 }
 
 pub(crate) fn validate_card_fields(

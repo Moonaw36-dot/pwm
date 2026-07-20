@@ -73,6 +73,7 @@ fn render_file_menu(ui: &imgui::Ui, state: &mut AppState) {
         ui.separator();
         if ui.menu_item("Settings") {
             state.settings_timeout_mins = (state.vault.lock_timeout_secs / 60) as u32;
+            state.settings_light_mode = state.light_mode;
             state.modals.settings = true;
         }
     });

@@ -127,10 +127,9 @@ fn main() {
 
     let mut renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_ctx).unwrap();
 
-    theme::apply(imgui_ctx.style_mut());
-
     let mut last_frame = std::time::Instant::now();
     let mut state = AppState::new();
+    theme::apply(imgui_ctx.style_mut(), state.light_mode);
 
     event_loop
         .run(move |event, target| {
@@ -190,6 +189,27 @@ fn main() {
             }
 
             match event {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(new_size),
+                    ..
+                } => {
+                    if new_size.width > 0 && new_size.height > 0 {
+                        gl_surface.resize(
+                            &gl_context,
+                            NonZeroU32::new(new_size.width).unwrap(),
+                            NonZeroU32::new(new_size.height).unwrap(),
+                        );
+
+                        unsafe {
+                            renderer.gl_context().viewport(
+                                0,
+                                0,
+                                new_size.width as i32,
+                                new_size.height as i32,
+                            );
+                        }
+                    }
+                }
                 Event::NewEvents(_) => {
                     imgui_ctx.io_mut().update_delta_time(last_frame.elapsed());
                     last_frame = std::time::Instant::now();
@@ -201,6 +221,7 @@ fn main() {
                     event: WindowEvent::RedrawRequested,
                     ..
                 } => {
+                    theme::apply(imgui_ctx.style_mut(), state.light_mode);
                     platform.prepare_frame(imgui_ctx.io_mut(), &window).unwrap();
                     let ui = imgui_ctx.frame();
 
@@ -217,7 +238,8 @@ fn main() {
                     unsafe {
                         let gl = renderer.gl_context();
                         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-                        gl.clear_color(0.1, 0.1, 0.1, 1.0);
+                        let [r, g, b, a] = theme::clear_color(state.light_mode);
+                        gl.clear_color(r, g, b, a);
                         gl.clear(glow::COLOR_BUFFER_BIT);
                     }
 

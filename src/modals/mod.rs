@@ -203,6 +203,7 @@ pub(crate) fn copy_entry_to_form(
             form.cvc = entry.cvc.clone().unwrap_or_default();
             form.expiration_date = entry.expiration_date.clone().unwrap_or_default();
         }
+        PasswordType::WiFi => {}
         _ => {}
     }
 }

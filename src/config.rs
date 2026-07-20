@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub light_mode: bool,
     pub lock_timeout_secs: u64,
     #[serde(default)]
     pub keyfile_hashes: HashMap<PathBuf, [u8; 32]>,
@@ -12,6 +14,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            light_mode: false,
             lock_timeout_secs: 300,
             keyfile_hashes: Default::default(),
         }
@@ -31,7 +34,11 @@ pub fn load() -> Config {
         Ok(d) => d,
         Err(_) => return Config::default(),
     };
-    serde_json::from_str(&data).unwrap_or_default()
+
+    serde_json::from_str(&data).unwrap_or_else(|e| {
+        log::error!("Failed to parse config, using default config: {e}");
+        Config::default()
+    })
 }
 
 pub fn save(config: &Config) -> Result<(), String> {

@@ -55,6 +55,8 @@ pub struct Vault {
 }
 
 pub struct EntryForm {
+    pub iterations_entry: i32,
+
     // PASSWORD NORMAL
     pub label: String,
     pub username: String,
@@ -131,6 +133,10 @@ pub struct AppState {
     pub hibp_pending: Option<(u64, std::sync::mpsc::Receiver<Result<bool, String>>, String)>,
     pub pending_exit: bool,
     pub should_exit: bool,
+
+    // settings
+    pub light_mode: bool,
+    pub settings_light_mode: bool,
 }
 
 #[cfg(test)]

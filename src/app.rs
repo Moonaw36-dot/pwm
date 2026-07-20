@@ -10,7 +10,7 @@ const CLIPBOARD_CLEAR_SECS: u64 = 10;
 const COPIED_NOTICE_SECS: u64 = 3;
 
 impl Vault {
-    fn new() -> Self {
+    fn new(config: &crate::config::Config) -> Self {
         Self {
             file_name: String::new(),
             file_path: None,
@@ -18,7 +18,7 @@ impl Vault {
             store: None,
             encryption_key: None,
             last_activity: Instant::now(),
-            lock_timeout_secs: crate::config::load().lock_timeout_secs,
+            lock_timeout_secs: config.lock_timeout_secs,
             keyfile: None,
             keyfile_hash: None,
             keyfile_bytes: None,
@@ -29,6 +29,7 @@ impl Vault {
 impl EntryForm {
     fn new() -> Self {
         Self {
+            iterations_entry: 1000,
             label: String::with_capacity(INPUT_CAPACITY),
             username: String::with_capacity(INPUT_CAPACITY),
             password: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
@@ -139,8 +140,10 @@ impl ClipboardState {
 
 impl AppState {
     pub fn new() -> Self {
+        let config = crate::config::load();
+
         Self {
-            vault: Vault::new(),
+            vault: Vault::new(&config),
             form: EntryForm::new(),
             generator: Generator::new(),
             modals: Modals::new(),
@@ -161,6 +164,8 @@ impl AppState {
             hibp_pending: None,
             pending_exit: false,
             should_exit: false,
+            light_mode: config.light_mode,
+            settings_light_mode: config.light_mode,
         }
     }
 
