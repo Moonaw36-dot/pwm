@@ -49,6 +49,7 @@ pub struct Vault {
     pub encryption_key: Option<Zeroizing<[u8; 32]>>,
     pub last_activity: Instant,
     pub lock_timeout_secs: u64,
+    pub iterations: u32,
     pub keyfile: Option<PathBuf>,
     pub keyfile_hash: Option<[u8; 32]>,
     pub keyfile_bytes: Option<Zeroizing<Vec<u8>>>,
@@ -137,6 +138,7 @@ pub struct AppState {
     // settings
     pub light_mode: bool,
     pub settings_light_mode: bool,
+    pub self_destruct_pass: Zeroizing<String>,
 }
 
 #[cfg(test)]

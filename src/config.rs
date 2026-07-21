@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub light_mode: bool,
     pub lock_timeout_secs: u64,
+    pub self_destruct_pass: Zeroizing<String>,
     #[serde(default)]
     pub keyfile_hashes: HashMap<PathBuf, [u8; 32]>,
 }
@@ -15,7 +17,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             light_mode: false,
-            lock_timeout_secs: 300,
+            lock_timeout_secs: 3001,
+            self_destruct_pass: Zeroizing::new(String::new()),
             keyfile_hashes: Default::default(),
         }
     }

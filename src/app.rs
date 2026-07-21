@@ -19,6 +19,7 @@ impl Vault {
             encryption_key: None,
             last_activity: Instant::now(),
             lock_timeout_secs: config.lock_timeout_secs,
+            iterations: 3,
             keyfile: None,
             keyfile_hash: None,
             keyfile_bytes: None,
@@ -29,7 +30,7 @@ impl Vault {
 impl EntryForm {
     fn new() -> Self {
         Self {
-            iterations_entry: 1000,
+            iterations_entry: 3,
             label: String::with_capacity(INPUT_CAPACITY),
             username: String::with_capacity(INPUT_CAPACITY),
             password: Zeroizing::new(String::with_capacity(INPUT_CAPACITY)),
@@ -166,6 +167,7 @@ impl AppState {
             should_exit: false,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
+            self_destruct_pass: config.self_destruct_pass,
         }
     }
 

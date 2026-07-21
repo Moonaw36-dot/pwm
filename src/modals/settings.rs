@@ -28,6 +28,9 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.checkbox("Light mode", &mut state.settings_light_mode);
 
+    ui.input_text("Self destruct password", &mut state.self_destruct_pass)
+        .build();
+
     if ui.button("Save") {
         state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
         state.light_mode = state.settings_light_mode;
@@ -35,6 +38,7 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
         let mut config = crate::config::load();
         config.light_mode = state.light_mode;
         config.lock_timeout_secs = state.vault.lock_timeout_secs;
+        config.self_destruct_pass = state.self_destruct_pass.clone();
 
         if let Err(e) = crate::config::save(&config) {
             state.custom_error_message = Some(e);

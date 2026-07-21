@@ -11,7 +11,9 @@ use zeroize::{Zeroize, Zeroizing};
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
-const HEADER_LEN: usize = SALT_LEN + NONCE_LEN;
+const ITER_LEN: usize = 4;
+const HEADER_LEN: usize = SALT_LEN + ITER_LEN + NONCE_LEN;
+const HEADER_LEN_LEGACY: usize = SALT_LEN + NONCE_LEN;
 
 fn private_file_for_write(path: &Path) -> Result<std::fs::File, String> {
     let mut options = std::fs::OpenOptions::new();
@@ -213,16 +215,9 @@ fn derive_key(
     password: &str,
     salt: &[u8; 16],
     keyfile_bytes: Option<&[u8]>,
+    iterations: u32,
 ) -> Result<Zeroizing<[u8; 32]>, String> {
-    derive_key_params(password, salt, 65536, 3, keyfile_bytes)
-}
-
-fn derive_key_legacy(
-    password: &str,
-    salt: &[u8; 16],
-    keyfile_bytes: Option<&[u8]>,
-) -> Result<Zeroizing<[u8; 32]>, String> {
-    derive_key_params(password, salt, 19456, 2, keyfile_bytes)
+    derive_key_params(password, salt, 65536, iterations, keyfile_bytes)
 }
 
 fn derive_key_params(
@@ -249,7 +244,7 @@ fn derive_key_params(
 
     Ok(key)
 }
-fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Vec<u8>, String> {
+fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8], iterations: u32) -> Result<Vec<u8>, String> {
     let json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?);
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -259,6 +254,7 @@ fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8]) -> Result<Ve
 
     let mut out = Vec::with_capacity(HEADER_LEN + ciphertext.len());
     out.extend_from_slice(salt);
+    out.extend_from_slice(&iterations.to_le_bytes());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ciphertext);
     Ok(out)
@@ -295,18 +291,21 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     let mut salt = [0u8; SALT_LEN];
     rand::rng().fill_bytes(&mut salt);
 
+    let iterations = state.form.iterations_entry as u32;
     let key = derive_key(
         &state.master_input,
         &salt,
         state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice()),
+        iterations,
     )?;
-    let filedata = encrypt_store(&empty_store, &key, &salt)?;
+    let filedata = encrypt_store(&empty_store, &key, &salt, iterations)?;
     write_private_file(&path, &filedata)?;
 
     state.vault.store = Some(empty_store);
     state.vault.encryption_key = Some(key);
     state.vault.file_path = Some(path);
     state.vault.file_name = vault_name;
+    state.vault.iterations = iterations;
     Ok(())
 }
 
@@ -413,16 +412,17 @@ mod tests {
         rand::rng().fill_bytes(&mut salt);
 
         let key = derive_key_params(password, &salt, 65536, 3, None).unwrap();
-        let encrypted = encrypt_store(&store, &key, &salt).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
 
         assert!(encrypted.len() > HEADER_LEN);
         assert_eq!(&encrypted[..SALT_LEN], &salt);
+        assert_eq!(&encrypted[SALT_LEN..SALT_LEN + ITER_LEN], &3u32.to_le_bytes());
 
-        let nonce: [u8; 12] = encrypted[SALT_LEN..HEADER_LEN].try_into().unwrap();
+        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().unwrap();
         let ciphertext = &encrypted[HEADER_LEN..];
 
         let (decrypted_store, _) =
-            try_decrypt(password, &salt, &nonce, ciphertext, false, None).unwrap();
+            try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, None).unwrap();
 
         assert_eq!(decrypted_store.entries.len(), 2);
         assert_eq!(decrypted_store.entries[0].label, "test");
@@ -442,12 +442,12 @@ mod tests {
         rand::rng().fill_bytes(&mut salt);
 
         let key = derive_key_params("correct", &salt, 65536, 3, None).unwrap();
-        let encrypted = encrypt_store(&store, &key, &salt).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
 
-        let nonce: [u8; 12] = encrypted[SALT_LEN..HEADER_LEN].try_into().unwrap();
+        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().unwrap();
         let ciphertext = &encrypted[HEADER_LEN..];
 
-        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, false, None).is_none());
+        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, 65536, 3, None).is_none());
     }
 
     #[test]
@@ -463,7 +463,14 @@ mod tests {
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
         let legacy_key = derive_key_params("mypass", &salt, 19456, 2, None).unwrap();
-        let encrypted = encrypt_store(&store, &legacy_key, &salt).unwrap();
+        let json = serde_json::to_string_pretty(&store).unwrap();
+        let cipher = Aes256Gcm::new((&*legacy_key).into());
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, json.as_bytes()).unwrap();
+        let mut encrypted = Vec::with_capacity(HEADER_LEN_LEGACY + ciphertext.len());
+        encrypted.extend_from_slice(&salt);
+        encrypted.extend_from_slice(&nonce);
+        encrypted.extend_from_slice(&ciphertext);
 
         let (decrypted, new_key) = load_store_for_test(&encrypted, "mypass").unwrap();
         assert_eq!(decrypted.entries[0].label, "legacy");
@@ -474,15 +481,38 @@ mod tests {
         data: &[u8],
         password: &str,
     ) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-        if data.len() < HEADER_LEN + 1 {
-            return None;
+        if data.len() >= HEADER_LEN_LEGACY + 1 {
+            let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
+            let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY].try_into().ok()?;
+            let ct = &data[HEADER_LEN_LEGACY..];
+            if let Some(result) = try_decrypt(password, &salt, &nonce, ct, 19456, 2, None)
+                .or_else(|| try_decrypt(password, &salt, &nonce, ct, 65536, 3, None))
+            {
+                return Some(result);
+            }
         }
-        let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
-        let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN].try_into().ok()?;
-        let ct = &data[HEADER_LEN..];
-        try_decrypt(password, &salt, &nonce, ct, false, None)
-            .or_else(|| try_decrypt(password, &salt, &nonce, ct, true, None))
+        if data.len() >= HEADER_LEN + 1 {
+            let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
+            let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().ok()?;
+            let ct = &data[HEADER_LEN..];
+            let iterations = parse_iterations_from_header(data);
+            try_decrypt(password, &salt, &nonce, ct, 65536, iterations, None)
+                .or_else(|| try_decrypt(password, &salt, &nonce, ct, 65536, 3, None))
+                .or_else(|| try_decrypt(password, &salt, &nonce, ct, 65536, 2, None))
+        } else {
+            None
+        }
     }
+}
+
+fn parse_iterations_from_header(data: &[u8]) -> u32 {
+    if data.len() >= SALT_LEN + ITER_LEN {
+        let val = u32::from_le_bytes(data[SALT_LEN..SALT_LEN + ITER_LEN].try_into().unwrap_or([0; 4]));
+        if (1..=1000).contains(&val) {
+            return val;
+        }
+    }
+    3
 }
 
 fn try_decrypt(
@@ -490,15 +520,11 @@ fn try_decrypt(
     salt: &[u8; 16],
     nonce: &[u8; 12],
     ciphertext: &[u8],
-    legacy: bool,
+    m_cost: u32,
+    t_cost: u32,
     keyfile_bytes: Option<&[u8]>,
 ) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-    let key = if legacy {
-        derive_key_legacy(password, salt, keyfile_bytes)
-    } else {
-        derive_key(password, salt, keyfile_bytes)
-    }
-    .ok()?;
+    let key = derive_key_params(password, salt, m_cost, t_cost, keyfile_bytes).ok()?;
     let cipher = Aes256Gcm::new((&*key).into());
     let plaintext = cipher.decrypt(nonce.into(), ciphertext).ok()?;
     let mut json = String::from_utf8(plaintext).ok()?;
@@ -513,27 +539,32 @@ pub fn load_store(
     keyfile_bytes: Option<&[u8]>,
 ) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
     let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
-    if data.len() < HEADER_LEN + 1 {
-        return Err("File is too short to be a valid vault".to_string());
-    }
 
     let salt: [u8; 16] = data[..SALT_LEN]
         .try_into()
         .map_err(|_| "Invalid salt".to_string())?;
-    let nonce_bytes: [u8; 12] = data[SALT_LEN..HEADER_LEN]
-        .try_into()
-        .map_err(|_| "Invalid nonce".to_string())?;
-    let ciphertext = &data[HEADER_LEN..];
 
-    for legacy in [false, true] {
-        if let Some(result) = try_decrypt(
-            password,
-            &salt,
-            &nonce_bytes,
-            ciphertext,
-            legacy,
-            keyfile_bytes,
-        ) {
+    if data.len() >= HEADER_LEN_LEGACY + 1 {
+        let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY]
+            .try_into()
+            .map_err(|_| "Invalid nonce".to_string())?;
+        let ciphertext = &data[HEADER_LEN_LEGACY..];
+        for (m_cost, t_cost) in [(19456u32, 2u32), (65536u32, 3u32)] {
+            if let Some(result) =
+                try_decrypt(password, &salt, &nonce, ciphertext, m_cost, t_cost, keyfile_bytes)
+            {
+                return Ok(result);
+            }
+        }
+    }
+
+    if data.len() >= HEADER_LEN + 1 {
+        let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN]
+            .try_into()
+            .map_err(|_| "Invalid nonce".to_string())?;
+        let ciphertext = &data[HEADER_LEN..];
+        let iterations = parse_iterations_from_header(&data);
+        if let Some(result) = try_decrypt(password, &salt, &nonce, ciphertext, 65536, iterations, keyfile_bytes) {
             return Ok(result);
         }
     }
@@ -553,8 +584,9 @@ pub fn save_store(
         return Err("File is too short to be a valid store".to_string());
     }
     let salt = &existing[..SALT_LEN];
+    let iterations = parse_iterations_from_header(&existing);
 
-    let filedata = encrypt_store(store, key, salt)?;
+    let filedata = encrypt_store(store, key, salt, iterations)?;
     let tmp = temp_path_for(p);
     write_private_file(&tmp, &filedata)?;
     if let Err(e) = std::fs::rename(&tmp, p) {

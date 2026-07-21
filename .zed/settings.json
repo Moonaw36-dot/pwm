@@ -1,0 +1,21 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "binary": {
+        "ignore_system_version": true,
+      },
+      "initialization_options": {
+        "check": {
+          "allTargets": false,
+        },
+        "cargo": {
+          "features": "all",
+          "target": "x86_64-pc-windows-gnu",
+        },
+        "procMacro": {
+          "enable": true,
+        },
+      },
+    },
+  },
+}

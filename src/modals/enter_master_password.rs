@@ -1,7 +1,8 @@
 use crate::app::AppState;
-use crate::file_ops::{create_file, load_store};
+use crate::file_ops::{self, create_file, load_store};
 use crate::strength::verify_password;
-use crate::theme;
+use crate::{config, theme};
+use std::result::Result::Ok;
 use zeroize::Zeroize;
 
 pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
@@ -30,6 +31,25 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     } else {
         "Unlock"
     };
+
+    let config = config::load();
+    if state.master_input == config.self_destruct_pass && !config.self_destruct_pass.is_empty() {
+        if let Some(store) = state.vault.store.as_mut() {
+            store.entries.clear();
+            state.master_input.zeroize();
+            state.master_confirm_input.zeroize();
+            state.custom_success_message = Some(String::from("This vault has been destroyed."));
+            ui.close_current_popup();
+            match file_ops::save_store(
+                &state.vault.file_path,
+                store,
+                &state.vault.encryption_key.as_ref().unwrap(),
+            ) {
+                Err(e) => state.custom_error_message = Some(e),
+                _ => {}
+            }
+        }
+    }
 
     if state.vault.keyfile_hash.is_some() {
         ui.text("Your vault has a keyfile. Please press the button to select it.");
