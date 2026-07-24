@@ -31,6 +31,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 continue;
             }
 
+            if entry.is_secure_note {
+                continue;
+            }
+
             let (score, _label, _) = manual_strength(entry.password.as_str());
             if score < 2 {
                 weak_titles.push(format!(
@@ -54,6 +58,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
 
         for entry in &store.entries {
             if entry.password_type != PasswordType::Normal {
+                continue;
+            }
+
+            if entry.is_secure_note {
                 continue;
             }
 
@@ -164,6 +172,10 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         let mut old_titles: Vec<String> = Vec::new();
 
         for entry in &store.entries {
+            if entry.is_secure_note {
+                continue;
+            }
+
             if let Some(created_at) = entry.created_at
                 && now > created_at
                 && now - created_at > THIRTY_DAYS

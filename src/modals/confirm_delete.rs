@@ -20,6 +20,7 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
 
     if ui.button("No") {
+        state.delete_idx = None;
         ui.close_current_popup();
     }
 }

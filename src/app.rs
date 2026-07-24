@@ -176,7 +176,6 @@ impl AppState {
             self.close_file();
             self.vault.file_name = name;
             let config = crate::config::load();
-            self.vault.filesize = crate::get_current_filesize(&path);
             self.vault.keyfile_hash = config.keyfile_hashes.get(path.as_path()).copied();
             self.vault.file_path = Some(path);
             self.modals.master = true;
