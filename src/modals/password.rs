@@ -15,6 +15,9 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
         if ui.button("Confirm") {
             state.has_chosen_type = true;
         }
+        if ui.button("Cancel") {
+            ui.close_current_popup();
+        }
     } else {
         match state.form.password_type {
             PasswordType::Normal => {
