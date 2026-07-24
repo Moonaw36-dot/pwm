@@ -363,7 +363,7 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
         let mut new_key = Zeroizing::new([0u8; 32]);
         new_key.copy_from_slice(&digest);
 
-        if let Err(e) = save_store(&state.vault.file_path, &store, &new_key) {
+        if let Err(e) = save_store(&state.vault.file_path, &store, &new_key, state.vault.iterations) {
             state.vault.encryption_key = Some(enc_key);
             state.vault.store = Some(store);
             return Err(e);
@@ -564,7 +564,12 @@ pub fn load_store(
             .map_err(|_| "Invalid nonce".to_string())?;
         let ciphertext = &data[HEADER_LEN..];
         let iterations = parse_iterations_from_header(&data);
-        if let Some(result) = try_decrypt(password, &salt, &nonce, ciphertext, 65536, iterations, keyfile_bytes) {
+        if let Some(result) =
+            try_decrypt(password, &salt, &nonce, ciphertext, 65536, iterations, keyfile_bytes)
+                .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, keyfile_bytes))
+                .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 19456, 2, keyfile_bytes))
+                .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 2, keyfile_bytes))
+        {
             return Ok(result);
         }
     }
@@ -576,6 +581,7 @@ pub fn save_store(
     path: &Option<PathBuf>,
     store: &PasswordList,
     key: &[u8; 32],
+    iterations: u32,
 ) -> Result<(), String> {
     let Some(p) = path else { return Ok(()) };
 
@@ -584,7 +590,6 @@ pub fn save_store(
         return Err("File is too short to be a valid store".to_string());
     }
     let salt = &existing[..SALT_LEN];
-    let iterations = parse_iterations_from_header(&existing);
 
     let filedata = encrypt_store(store, key, salt, iterations)?;
     let tmp = temp_path_for(p);

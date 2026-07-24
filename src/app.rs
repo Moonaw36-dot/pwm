@@ -225,7 +225,7 @@ impl AppState {
         if let Some(key) = &self.vault.encryption_key
             && let Some(store) = &self.vault.store
         {
-            save_store(&self.vault.file_path, store, key)?;
+            save_store(&self.vault.file_path, store, key, self.vault.iterations)?;
         }
         Ok(())
     }
