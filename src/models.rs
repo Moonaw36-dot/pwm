@@ -90,6 +90,7 @@ pub struct Generator {
 
 pub struct Modals {
     pub add_password: bool,
+    pub add_entry_popup: bool,
     pub close_add_password: bool,
     pub settings: bool,
     pub error_password: bool,
@@ -139,6 +140,8 @@ pub struct AppState {
     pub light_mode: bool,
     pub settings_light_mode: bool,
     pub self_destruct_pass: Zeroizing<String>,
+
+    pub card_texture: Option<imgui::TextureId>,
 }
 
 #[cfg(test)]

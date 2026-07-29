@@ -188,12 +188,11 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
 
     if state.modals.add_password {
         state.has_chosen_type = false;
-        open_popup_once(ui, &mut state.modals.add_password, "Add a password");
+        state.modals.add_entry_popup = false;
+        open_popup_once(ui, &mut state.modals.add_password, "Select password type");
     }
 
-    if let Some(_token) = ui.begin_modal_popup("Add a password") {
-        render_add_password_modal(ui, state);
-    }
+    render_add_password_modal(ui, state);
 
     if state.edit_index.is_some() {
         ui.open_popup("Modify entry");
@@ -223,7 +222,22 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 fn render_add_password_modal(ui: &imgui::Ui, state: &mut AppState) {
-    crate::modals::password_modal(ui, state);
+    if !state.has_chosen_type {
+        if let Some(_token) = ui.begin_modal_popup("Select password type") {
+            crate::modals::password_modal(ui, state);
+        }
+    }
+
+    if state.has_chosen_type {
+        let add_title = match state.form.password_type {
+            crate::models::PasswordType::Card => "Add card",
+            _ => "Add a password",
+        };
+        open_popup_once(ui, &mut state.modals.add_entry_popup, add_title);
+        if let Some(_token) = ui.begin_modal_popup(add_title) {
+            crate::modals::password_modal(ui, state);
+        }
+    }
 
     open_popup_once(ui, &mut state.modals.error_password, "Error");
     if let Some(_token) = ui.begin_modal_popup("Error") {

@@ -48,6 +48,7 @@ dependencies = [
  "glow",
  "glutin",
  "glutin-winit",
+ "image",
  "imgui",
  "imgui-glow-renderer",
  "imgui-winit-support",

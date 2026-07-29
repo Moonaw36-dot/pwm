@@ -72,6 +72,7 @@ impl Modals {
     fn new() -> Self {
         Self {
             add_password: false,
+            add_entry_popup: false,
             close_add_password: false,
             settings: false,
             error_password: false,
@@ -168,6 +169,7 @@ impl AppState {
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
             self_destruct_pass: config.self_destruct_pass,
+            card_texture: None,
         }
     }
 

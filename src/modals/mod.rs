@@ -246,6 +246,12 @@ pub(crate) fn render_entries_list(
                 ui.same_line();
             }
 
+            let cursor = ui.cursor_pos();
+            let text_height = ui.text_line_height();
+            let button_height = ui.frame_height();
+            let offset = (button_height - text_height) * -0.5;
+            ui.set_cursor_pos([cursor[0], cursor[1] + offset]);
+
             if ui.button(format!("{}##{}{}", from, from, i)) {
                 clicked_idx = Some(i);
                 clicked_entry = Some(entry);

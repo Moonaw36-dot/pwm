@@ -8,6 +8,7 @@ mod input;
 mod modals;
 mod models;
 mod strength;
+mod texture;
 mod theme;
 mod ui;
 mod ui_tabs;
@@ -123,8 +124,16 @@ fn main() {
 
     let mut renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_ctx).unwrap();
 
+    let gl_rc = renderer.gl_context().clone();
+    let card_texture = texture::load_from_bytes(
+        &gl_rc,
+        renderer.texture_map_mut(),
+        include_bytes!("../assets/icons8-magnetic-card-48.png"),
+    );
+
     let mut last_frame = std::time::Instant::now();
     let mut state = AppState::new();
+    state.card_texture = card_texture;
     theme::apply(imgui_ctx.style_mut(), state.light_mode);
 
     event_loop
