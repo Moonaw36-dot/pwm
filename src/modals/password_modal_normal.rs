@@ -37,7 +37,6 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         ui.same_line();
 
         if ui.button("Copy password") {
-            // Route through ClipboardState so the 10-second auto-clear is scheduled.
             let password = state.form.password.clone();
             state.copy_to_clipboard(&password, "password");
         }

@@ -166,7 +166,8 @@ impl AppState {
             should_exit: false,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
-            self_destruct_pass: config.self_destruct_pass,
+            // input buffer only; the stored value is a hash
+            self_destruct_pass: Zeroizing::new(String::new()),
             card_texture: None,
         }
     }
@@ -296,13 +297,11 @@ mod tests {
             .expect("copy must arm the 10s auto-clear timer");
         assert_eq!(state.clipboard.copied_field.as_deref(), Some("password"));
 
-        // Before the deadline the clipboard is left alone.
         state
             .clipboard
             .clear_expired(clear_at - Duration::from_secs(1));
         assert!(state.clipboard.clear_at.is_some());
 
-        // At/after the deadline the clear fires and the timer is consumed.
         state
             .clipboard
             .clear_expired(clear_at + Duration::from_secs(1));

@@ -85,6 +85,7 @@ fn import_csv(state: &mut AppState) {
             if let Some(store) = &mut state.vault.store {
                 store.entries.extend(imported.entries);
             }
+            state.save();
         }
         Ok(None) => {}
         Err(error) => state.custom_error_message = Some(error),

@@ -5,10 +5,8 @@
 ///   clipboard transaction, which prevents Windows 10+ clipboard history from capturing it
 /// - macOS: no public API exists; falls back to a plain set (value still auto-clears after 10s)
 ///
-/// This only writes the clipboard — it does NOT schedule the 10-second auto-clear.
-/// App code should go through `crate::app::AppState::copy_to_clipboard` (or
-/// `ClipboardState::copy`) so the clear timer is always armed. Raw writes that bypass
-/// that path leave the secret on the clipboard indefinitely.
+/// Writes the clipboard but does not arm the 10s auto-clear — copy secrets via
+/// `AppState::copy_to_clipboard` so they don't outlive the timer.
 pub(crate) fn set_excluded_from_history(clipboard: &mut arboard::Clipboard, text: &str) {
     #[cfg(target_os = "linux")]
     {

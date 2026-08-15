@@ -62,10 +62,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if ui.button(button_label) {
-        if state.master_input == config.self_destruct_pass
-            && !config.self_destruct_pass.is_empty()
-            && !state.modals.master_is_create
-        {
+        if !state.modals.master_is_create && config.duress.matches(&state.master_input) {
             if let Some(ref path) = state.vault.file_path {
                 let _ = std::fs::remove_file(path);
             }

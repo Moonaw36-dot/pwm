@@ -323,10 +323,8 @@ pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
     let bytes = Zeroizing::new(std::fs::read(&path).map_err(|e| e.to_string())?);
     let hash: [u8; 32] = Sha256::digest(&bytes).into();
 
-    // Validate only when a hash is on record. If the config record is missing
-    // (config lost, or the vault moved machines), accept the selection and let
-    // decryption be the arbiter — a wrong keyfile simply fails unlock with the
-    // same generic error. The record is re-created after a successful unlock.
+    // Only check the hash when a record exists, a lost config must not lock
+    // the vault out of its keyfile. Decryption is the real arbiter either way.
     if let Some(expected) = state.vault.keyfile_hash
         && hash != expected
     {

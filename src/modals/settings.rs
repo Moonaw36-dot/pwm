@@ -1,5 +1,6 @@
 use crate::app::AppState;
 use crate::theme;
+use zeroize::Zeroizing;
 
 pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_SETTINGS, 0.0]);
@@ -29,7 +30,9 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.checkbox("Light mode", &mut state.settings_light_mode);
 
     ui.input_text("Self destruct password", &mut state.self_destruct_pass)
+        .password(true)
         .build();
+    ui.text_disabled("Stored as a salted hash. Leave empty to disable.");
 
     if ui.button("Save") {
         state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
@@ -38,7 +41,8 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
         let mut config = crate::config::load();
         config.light_mode = state.light_mode;
         config.lock_timeout_secs = state.vault.lock_timeout_secs;
-        config.self_destruct_pass = state.self_destruct_pass.clone();
+        config.duress.set(&state.self_destruct_pass);
+        state.self_destruct_pass = Zeroizing::new(String::new());
 
         if let Err(e) = crate::config::save(&config) {
             state.custom_error_message = Some(e);
