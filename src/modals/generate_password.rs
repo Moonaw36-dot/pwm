@@ -86,9 +86,8 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         }
     } else {
         if ui.button("Copy to clipboard###gen") {
-            if let Some(ref mut handle) = state.clipboard.handle {
-                crate::clipboard::set_excluded_from_history(handle, &state.form.password);
-            }
+            let password = state.form.password.clone();
+            state.copy_to_clipboard(&password, "generated password");
             ui.close_current_popup();
         }
 

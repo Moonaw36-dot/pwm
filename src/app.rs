@@ -84,7 +84,6 @@ impl Modals {
             master_is_create: false,
             confirm_delete: false,
             show_success: false,
-            confirm_unsaved: false,
         }
     }
 }
@@ -164,7 +163,6 @@ impl AppState {
             strength_cache: None,
             hibp_cache: std::collections::HashMap::new(),
             hibp_pending: None,
-            pending_exit: false,
             should_exit: false,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
@@ -285,6 +283,30 @@ mod tests {
         assert!(state.form.label.is_empty());
         assert!(state.form.custom_fields.is_empty());
         assert!(!state.form.is_secure_note);
+    }
+
+    #[test]
+    fn test_copy_to_clipboard_schedules_auto_clear() {
+        let mut state = AppState::new();
+        state.copy_to_clipboard("s3cret", "password");
+
+        let clear_at = state
+            .clipboard
+            .clear_at
+            .expect("copy must arm the 10s auto-clear timer");
+        assert_eq!(state.clipboard.copied_field.as_deref(), Some("password"));
+
+        // Before the deadline the clipboard is left alone.
+        state
+            .clipboard
+            .clear_expired(clear_at - Duration::from_secs(1));
+        assert!(state.clipboard.clear_at.is_some());
+
+        // At/after the deadline the clear fires and the timer is consumed.
+        state
+            .clipboard
+            .clear_expired(clear_at + Duration::from_secs(1));
+        assert!(state.clipboard.clear_at.is_none());
     }
 
     #[test]

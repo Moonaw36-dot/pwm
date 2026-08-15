@@ -244,7 +244,12 @@ fn derive_key_params(
 
     Ok(key)
 }
-fn encrypt_store(store: &PasswordList, key: &[u8; 32], salt: &[u8], iterations: u32) -> Result<Vec<u8>, String> {
+fn encrypt_store(
+    store: &PasswordList,
+    key: &[u8; 32],
+    salt: &[u8],
+    iterations: u32,
+) -> Result<Vec<u8>, String> {
     let json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?);
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -318,13 +323,37 @@ pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
     let bytes = Zeroizing::new(std::fs::read(&path).map_err(|e| e.to_string())?);
     let hash: [u8; 32] = Sha256::digest(&bytes).into();
 
-    if Some(hash) != state.vault.keyfile_hash {
-        return Err("Invalid hash.".to_string());
+    // Validate only when a hash is on record. If the config record is missing
+    // (config lost, or the vault moved machines), accept the selection and let
+    // decryption be the arbiter — a wrong keyfile simply fails unlock with the
+    // same generic error. The record is re-created after a successful unlock.
+    if let Some(expected) = state.vault.keyfile_hash
+        && hash != expected
+    {
+        return Err("Invalid keyfile: hash does not match.".to_string());
     }
 
     state.vault.keyfile = Some(path);
     state.vault.keyfile_bytes = Some(bytes);
     Ok(())
+}
+
+pub fn remember_keyfile_hash(state: &mut AppState) {
+    if state.vault.keyfile_hash.is_some() {
+        return;
+    }
+    let Some(bytes) = &state.vault.keyfile_bytes else {
+        return;
+    };
+    let Some(vault_path) = &state.vault.file_path else {
+        return;
+    };
+
+    let hash: [u8; 32] = Sha256::digest(bytes.as_slice()).into();
+    let mut config = crate::config::load();
+    config.keyfile_hashes.insert(vault_path.clone(), hash);
+    let _ = crate::config::save(&config);
+    state.vault.keyfile_hash = Some(hash);
 }
 
 pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
@@ -363,7 +392,12 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
         let mut new_key = Zeroizing::new([0u8; 32]);
         new_key.copy_from_slice(&digest);
 
-        if let Err(e) = save_store(&state.vault.file_path, &store, &new_key, state.vault.iterations) {
+        if let Err(e) = save_store(
+            &state.vault.file_path,
+            &store,
+            &new_key,
+            state.vault.iterations,
+        ) {
             state.vault.encryption_key = Some(enc_key);
             state.vault.store = Some(store);
             return Err(e);
@@ -416,9 +450,14 @@ mod tests {
 
         assert!(encrypted.len() > HEADER_LEN);
         assert_eq!(&encrypted[..SALT_LEN], &salt);
-        assert_eq!(&encrypted[SALT_LEN..SALT_LEN + ITER_LEN], &3u32.to_le_bytes());
+        assert_eq!(
+            &encrypted[SALT_LEN..SALT_LEN + ITER_LEN],
+            &3u32.to_le_bytes()
+        );
 
-        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().unwrap();
+        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN]
+            .try_into()
+            .unwrap();
         let ciphertext = &encrypted[HEADER_LEN..];
 
         let (decrypted_store, _) =
@@ -444,7 +483,9 @@ mod tests {
         let key = derive_key_params("correct", &salt, 65536, 3, None).unwrap();
         let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
 
-        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().unwrap();
+        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN]
+            .try_into()
+            .unwrap();
         let ciphertext = &encrypted[HEADER_LEN..];
 
         assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, 65536, 3, None).is_none());
@@ -507,8 +548,12 @@ mod tests {
 
 fn parse_iterations_from_header(data: &[u8]) -> u32 {
     if data.len() >= SALT_LEN + ITER_LEN {
-        let val = u32::from_le_bytes(data[SALT_LEN..SALT_LEN + ITER_LEN].try_into().unwrap_or([0; 4]));
-        if (1..=1000).contains(&val) {
+        let val = u32::from_le_bytes(
+            data[SALT_LEN..SALT_LEN + ITER_LEN]
+                .try_into()
+                .unwrap_or([0; 4]),
+        );
+        if (1..=20).contains(&val) {
             return val;
         }
     }
@@ -540,35 +585,53 @@ pub fn load_store(
 ) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
     let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
 
+    let existing = std::fs::read(path).map_err(|e| e.to_string())?;
+    if existing.len() < SALT_LEN {
+        return Err("File is too short to be a valid store".to_string());
+    }
+
     let salt: [u8; 16] = data[..SALT_LEN]
         .try_into()
         .map_err(|_| "Invalid salt".to_string())?;
 
-    if data.len() >= HEADER_LEN_LEGACY + 1 {
+    if data.len() > HEADER_LEN_LEGACY {
         let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY]
             .try_into()
             .map_err(|_| "Invalid nonce".to_string())?;
         let ciphertext = &data[HEADER_LEN_LEGACY..];
         for (m_cost, t_cost) in [(19456u32, 2u32), (65536u32, 3u32)] {
-            if let Some(result) =
-                try_decrypt(password, &salt, &nonce, ciphertext, m_cost, t_cost, keyfile_bytes)
-            {
+            if let Some(result) = try_decrypt(
+                password,
+                &salt,
+                &nonce,
+                ciphertext,
+                m_cost,
+                t_cost,
+                keyfile_bytes,
+            ) {
                 return Ok(result);
             }
         }
     }
 
-    if data.len() >= HEADER_LEN + 1 {
+    if data.len() > HEADER_LEN {
         let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN]
             .try_into()
             .map_err(|_| "Invalid nonce".to_string())?;
         let ciphertext = &data[HEADER_LEN..];
         let iterations = parse_iterations_from_header(&data);
-        if let Some(result) =
-            try_decrypt(password, &salt, &nonce, ciphertext, 65536, iterations, keyfile_bytes)
-                .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, keyfile_bytes))
-                .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 19456, 2, keyfile_bytes))
-                .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 2, keyfile_bytes))
+        if let Some(result) = try_decrypt(
+            password,
+            &salt,
+            &nonce,
+            ciphertext,
+            65536,
+            iterations,
+            keyfile_bytes,
+        )
+        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, keyfile_bytes))
+        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 19456, 2, keyfile_bytes))
+        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 2, keyfile_bytes))
         {
             return Ok(result);
         }

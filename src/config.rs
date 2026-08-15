@@ -17,7 +17,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             light_mode: false,
-            lock_timeout_secs: 3001,
+            lock_timeout_secs: 300,
             self_destruct_pass: Zeroizing::new(String::new()),
             keyfile_hashes: Default::default(),
         }

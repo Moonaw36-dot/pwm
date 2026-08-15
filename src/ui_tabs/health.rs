@@ -31,10 +31,6 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 continue;
             }
 
-            if entry.is_secure_note {
-                continue;
-            }
-
             let (score, _label, _) = manual_strength(entry.password.as_str());
             if score < 2 {
                 weak_titles.push(format!(

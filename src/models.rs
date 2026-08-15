@@ -102,7 +102,6 @@ pub struct Modals {
     pub master_is_create: bool,
     pub confirm_delete: bool,
     pub show_success: bool,
-    pub confirm_unsaved: bool,
 }
 
 pub struct ClipboardState {
@@ -133,7 +132,6 @@ pub struct AppState {
     pub strength_cache: Option<(Zeroizing<String>, StrengthResult)>,
     pub hibp_cache: std::collections::HashMap<u64, bool>,
     pub hibp_pending: Option<(u64, std::sync::mpsc::Receiver<Result<bool, String>>, String)>,
-    pub pending_exit: bool,
     pub should_exit: bool,
 
     // settings

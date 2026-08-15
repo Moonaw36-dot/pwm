@@ -34,8 +34,18 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
 
     let config = config::load();
 
-    if state.vault.keyfile_hash.is_some() {
-        ui.text("Your vault has a keyfile. Please press the button to select it.");
+    if state.vault.keyfile.is_some() {
+        ui.text("Keyfile selected.");
+        if ui.button("Clear keyfile") {
+            state.vault.keyfile = None;
+            state.vault.keyfile_bytes = None;
+        }
+    } else {
+        if state.vault.keyfile_hash.is_some() {
+            ui.text("This vault requires a keyfile. Select it to unlock.");
+        } else {
+            ui.text("If this vault was created with a keyfile, select it here.");
+        }
         if ui.button("Select keyfile") {
             match crate::file_ops::load_keyfile(state) {
                 Ok(_) => {
@@ -52,7 +62,9 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if ui.button(button_label) {
-        if state.master_input == config.self_destruct_pass && !config.self_destruct_pass.is_empty()
+        if state.master_input == config.self_destruct_pass
+            && !config.self_destruct_pass.is_empty()
+            && !state.modals.master_is_create
         {
             if let Some(ref path) = state.vault.file_path {
                 let _ = std::fs::remove_file(path);
@@ -64,8 +76,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
             state.vault.file_path = None;
             state.vault.file_name.clear();
             state.vault.filesize = None;
-            state.custom_success_message =
-                Some(String::from("This vault has been destroyed."));
+            state.custom_success_message = Some(String::from("This vault has been destroyed."));
             state.modals.show_success = true;
             ui.close_current_popup();
 
@@ -113,6 +124,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
                 Ok((store, key)) => {
                     state.vault.store = Some(store);
                     state.vault.encryption_key = Some(key);
+                    crate::file_ops::remember_keyfile_hash(state);
                     state.master_input.zeroize();
                     state.master_confirm_input.zeroize();
                     ui.close_current_popup();

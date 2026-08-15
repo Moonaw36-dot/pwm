@@ -262,6 +262,8 @@ fn main() {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => {
+                    // Wipe any copied secret from the clipboard before exiting.
+                    state.close_file();
                     target.exit();
                 }
                 _ => {}

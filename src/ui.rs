@@ -164,12 +164,6 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::confirm_delete_modal(ui, state);
     }
 
-    open_popup_once(ui, &mut state.modals.confirm_unsaved, "Unsaved Changes");
-
-    if let Some(_token) = ui.begin_modal_popup("Unsaved Changes") {
-        crate::modals::confirm_unsaved_modal(ui, state);
-    }
-
     open_popup_once(ui, &mut state.modals.master, "Master password");
 
     if let Some(_token) = ui.begin_modal_popup("Master password") {
@@ -222,10 +216,10 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 fn render_add_password_modal(ui: &imgui::Ui, state: &mut AppState) {
-    if !state.has_chosen_type {
-        if let Some(_token) = ui.begin_modal_popup("Select password type") {
-            crate::modals::password_modal(ui, state);
-        }
+    if !state.has_chosen_type
+        && let Some(_token) = ui.begin_modal_popup("Select password type")
+    {
+        crate::modals::password_modal(ui, state);
     }
 
     if state.has_chosen_type {

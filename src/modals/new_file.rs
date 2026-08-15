@@ -6,7 +6,7 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.text("Enter a name for the new vault file.");
 
     ui.input_text("Name", &mut state.filename_input).build();
-    ui.slider("Iterations", 1, 1000, &mut state.form.iterations_entry);
+    ui.slider("Iterations", 1, 20, &mut state.form.iterations_entry);
 
     if ui.button("OK") {
         state.filename_input = if state.filename_input.is_empty() {

@@ -1,5 +1,4 @@
 pub mod confirm_delete;
-pub mod confirm_unsaved;
 pub mod custom_error;
 pub mod enter_master_password;
 pub mod error_password;
@@ -16,7 +15,6 @@ pub mod success;
 pub mod warning;
 
 pub use confirm_delete::confirm_delete_modal;
-pub use confirm_unsaved::confirm_unsaved_modal;
 pub use custom_error::custom_error_modal;
 pub use enter_master_password::enter_master_password;
 pub use error_password::error_password_modal;
