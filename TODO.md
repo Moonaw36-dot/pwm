@@ -25,6 +25,7 @@
 - [X] **Magic number for 30-day password age** — `ui_tabs.rs:328` extract to a named constant.
 - [X] **"Fair" passwords flagged as weak** — `ui_tabs.rs:261` consider `if score < 2` instead of `if score < 3`.
 - [ ] **CSV import/export drops `custom_fields`** — `file_ops.rs:80,104-105` serialize/deserialize custom fields in round-trip.
+- [ ] **Windows clipboard handle leak** — `clipboard.rs` `GlobalAlloc` handle leaks if `SetClipboardData` fails (returns NULL); free it with `GlobalFree`.
 - [X] **Plaintext passwords as HashMap keys** — `ui_tabs.rs:278` hash passwords before using as map keys.
 - [X] **Double `.aegis` extension if user provides one** — `file_ops.rs:160` check if `file_name` already ends with `.aegis`.
 
@@ -37,6 +38,7 @@
 - [x] **Duress mode / self-destruct** — a second master password reveals a decoy vault; entering it during unlock pivots to a fake vault while the real one is destroyed.
 - [ ] **Hardware token support** — YubiKey/Nitrokey PIV or HMAC-SHA1 challenge-response required alongside master password for vault unlock.
 - [x] **Argon2id parameter configuration** — make memory (MiB) and iterations user-configurable, or auto-scale to hardware on first unlock.
+- [ ] **Unlock throttling** — incremental delay after N failed master-password attempts.
 
 ## Feature Gaps
 
@@ -46,6 +48,7 @@
 - [ ] **Automatic timed backups** — on each save, copy the vault file to a configurable backup directory with a timestamp suffix.
 - [ ] **Entry grouping / olders** — hierarchical folder tree alongside the flat list, with drag-and-drop to organize entries.
 - [ ] **Favorites / pinning** — starred entries float to the top of the view list and appear in a separate "Favorites" section.
+- [ ] **WiFi entry form** — `PasswordType::WiFi` exists in `models.rs` but has no add/modify UI or dedicated view yet.
 
 ## Quality-of-Life
 

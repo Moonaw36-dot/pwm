@@ -38,6 +38,7 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
+    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::Memory::{
         GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
     };
@@ -63,14 +64,20 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
 
         let ptr = GlobalLock(hmem) as *mut u16;
         if ptr.is_null() {
+            GlobalFree(hmem);
             CloseClipboard();
             return Err(());
         }
         std::ptr::copy_nonoverlapping(utf16.as_ptr(), ptr, utf16.len());
         GlobalUnlock(hmem);
 
-        // CF_UNICODETEXT = 13
-        SetClipboardData(13, hmem);
+        // CF_UNICODETEXT = 13. On failure the system never takes ownership
+        // of hmem, so it must be freed here.
+        if SetClipboardData(13, hmem).is_null() {
+            GlobalFree(hmem);
+            CloseClipboard();
+            return Err(());
+        }
 
         // Tell Windows clipboard history not to record this entry
         let fmt_name: Vec<u16> = "ExcludeClipboardContentFromMonitorProcessing\0"
