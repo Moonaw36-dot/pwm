@@ -57,10 +57,14 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     crate::modals::render_custom_fields_editor(ui, &mut state.form.custom_fields, "add");
 
     if ui.button("Add") {
-        let is_valid = !state.form.label.is_empty()
-            && (state.form.is_secure_note && !state.form.notes.is_empty()
-                || (!state.form.username.is_empty() && !state.form.password.is_empty()));
-        if !is_valid {
+        if let Err(error) = crate::modals::modify_entry::validate_normal_fields(
+            &state.form.label,
+            &state.form.username,
+            &state.form.password,
+            &state.form.notes,
+            state.form.is_secure_note,
+        ) {
+            state.custom_error_message = Some(error.to_string());
             state.modals.error_password = true;
         } else if !state.form.is_secure_note && !verify_password(&state.form.password).is_empty() {
             state.modals.warning_password = true;

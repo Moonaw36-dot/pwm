@@ -3,6 +3,7 @@ use crate::strength::StrengthResult;
 use arboard::Clipboard;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Instant;
 use totp_rs::TOTP;
 use zeroize::Zeroizing;
@@ -24,8 +25,11 @@ pub struct PasswordEntry {
     pub number: Option<Zeroizing<String>>,
     pub expiration_date: Option<Zeroizing<String>>,
     pub cvc: Option<Zeroizing<String>>,
+    pub favorite: Option<bool>,
     #[serde(skip)]
     pub totp_cache: Option<TOTP>,
+    #[serde(skip)]
+    pub totp_code_cache: Option<(Zeroizing<String>, u64)>,
 }
 
 #[derive(Copy, PartialEq, Clone, Default, Debug, Serialize, Deserialize)]
@@ -39,6 +43,13 @@ pub enum PasswordType {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PasswordList {
     pub entries: Vec<PasswordEntry>,
+}
+
+#[derive(Clone)]
+pub struct HealthSummary {
+    pub weak_titles: Vec<String>,
+    pub reused_groups: Vec<Vec<String>>,
+    pub old_titles: Vec<String>,
 }
 
 pub struct Vault {
@@ -109,7 +120,14 @@ pub struct ClipboardState {
     pub clear_at: Option<Instant>,
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
+    pub external_copy_pending: Arc<AtomicBool>,
 }
+
+pub type HibpPending = (
+    [u8; 32],
+    std::sync::mpsc::Receiver<Result<bool, String>>,
+    String,
+);
 
 pub struct AppState {
     pub vault: Vault,
@@ -130,8 +148,11 @@ pub struct AppState {
     pub custom_error_message: Option<String>,
     pub custom_success_message: Option<String>,
     pub strength_cache: Option<(Zeroizing<String>, StrengthResult)>,
-    pub hibp_cache: std::collections::HashMap<u64, bool>,
-    pub hibp_pending: Option<(u64, std::sync::mpsc::Receiver<Result<bool, String>>, String)>,
+    pub hibp_cache: std::collections::HashMap<[u8; 32], bool>,
+    pub hibp_pending: Option<HibpPending>,
+    pub hibp_cancel: Option<Arc<AtomicBool>>,
+    pub health_cache: Option<HealthSummary>,
+    pub search_cache: Option<(String, Vec<usize>)>,
     pub should_exit: bool,
 
     // settings
@@ -160,10 +181,12 @@ mod tests {
             is_secure_note: false,
             created_at: Some(1234567890),
             totp_cache: None,
+            totp_code_cache: None,
             password_type: PasswordType::Normal,
             number: None,
             expiration_date: None,
             cvc: None,
+            favorite: None,
         };
 
         let json = serde_json::to_string(&entry).unwrap();

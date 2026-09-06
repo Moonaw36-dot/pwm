@@ -3,6 +3,7 @@ use crate::{theme, ui_tabs};
 use std::time::Instant;
 
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
+    state.clipboard.sync_external_copy();
     state.clipboard.clear_expired(Instant::now());
     auto_lock_if_idle(state);
 
@@ -28,11 +29,8 @@ fn auto_lock_if_idle(state: &mut AppState) {
         return;
     }
 
-    state.vault.store = None;
-    state.clear_inputs();
-    state.vault.encryption_key = None;
+    state.lock_file();
     state.modals.master = true;
-    state.vault.last_activity = Instant::now();
 }
 
 fn render_menu_bar(ui: &imgui::Ui, state: &mut AppState) {
@@ -49,13 +47,14 @@ fn render_file_menu(ui: &imgui::Ui, state: &mut AppState) {
         if ui.menu_item("Open") {
             state.open_file();
         }
-        if ui.menu_item("Create") {
+        if state.vault.store.is_none() && ui.menu_item("Create") {
             state.modals.filename = true;
         }
         if ui.menu_item("Close") {
             state.close_file();
         }
-        if ui.menu_item("Add a key-file")
+        if state.vault.store.is_some()
+            && ui.menu_item("Add a key-file")
             && state.vault.keyfile.is_none()
             && let Err(error) = crate::file_ops::create_key_file(state)
         {
@@ -85,6 +84,7 @@ fn import_csv(state: &mut AppState) {
             if let Some(store) = &mut state.vault.store {
                 store.entries.extend(imported.entries);
             }
+            state.invalidate_vault_caches();
             state.save();
         }
         Ok(None) => {}
@@ -226,6 +226,7 @@ fn render_add_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     if state.has_chosen_type {
         let add_title = match state.form.password_type {
             crate::models::PasswordType::Card => "Add card",
+            crate::models::PasswordType::WiFi => "Add Wi-Fi",
             _ => "Add a password",
         };
         open_popup_once(ui, &mut state.modals.add_entry_popup, add_title);

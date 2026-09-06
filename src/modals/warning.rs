@@ -29,6 +29,9 @@ pub fn warning_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Ignore") {
         add_entry_from_inputs(state);
+        state.clear_inputs();
+        state.modals.add_entry_popup = false;
+        state.has_chosen_type = false;
         ui.close_current_popup();
     }
 }

@@ -110,7 +110,11 @@ pub fn load() -> Config {
     };
     let data = match std::fs::read_to_string(&path) {
         Ok(d) => d,
-        Err(_) => return Config::default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Config::default(),
+        Err(error) => {
+            log::error!("Failed to read config, using defaults: {error}");
+            return Config::default();
+        }
     };
 
     let mut config: Config = match serde_json::from_str(&data) {
@@ -121,8 +125,10 @@ pub fn load() -> Config {
         }
     };
 
-    if config.migrate_legacy_duress() {
-        let _ = save(&config);
+    if config.migrate_legacy_duress()
+        && let Err(error) = save(&config)
+    {
+        log::error!("Failed to persist migrated config: {error}");
     }
     config
 }
@@ -148,7 +154,7 @@ pub fn save(config: &Config) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    crate::file_ops::atomic_write_private_file(&path, json.as_bytes())
 }
 
 #[cfg(test)]

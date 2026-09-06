@@ -39,10 +39,11 @@ fn masked_card_number(entry: &PasswordEntry) -> String {
         .as_ref()
         .map(|number| {
             let number = number.as_str();
-            if number.len() > 4 {
-                format!("**** **** **** {}", &number[number.len() - 4..])
+            let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
+            if digits.len() > 4 {
+                format!("**** **** **** {}", &digits[digits.len() - 4..])
             } else {
-                number.to_string()
+                digits
             }
         })
         .unwrap_or_default()
@@ -129,22 +130,33 @@ fn ensure_totp_cache(entry: &mut PasswordEntry) {
     }
 }
 
-fn current_totp(entry: &PasswordEntry) -> (Option<String>, Option<String>) {
-    if let Some(totp) = &entry.totp_cache
-        && let Ok(code) = totp.generate_current()
+fn current_totp(entry: &mut PasswordEntry) -> (Option<String>, Option<String>) {
+    let Some(now) = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+    else {
+        return (None, None);
+    };
+    let expires_at = now - (now % TOTP_STEP_SECS) + TOTP_STEP_SECS;
+
+    if let Some((code, cached_expires_at)) = &entry.totp_code_cache
+        && *cached_expires_at > now
     {
-        return (Some(code), current_totp_timeout());
+        return (
+            Some(code.to_string()),
+            Some((cached_expires_at - now).to_string()),
+        );
     }
 
-    (None, None)
-}
-
-fn current_totp_timeout() -> Option<String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    let ttl = TOTP_STEP_SECS - (now.as_secs() % TOTP_STEP_SECS);
-    Some(ttl.to_string())
+    let Some(totp) = &entry.totp_cache else {
+        return (None, None);
+    };
+    let Ok(code) = totp.generate_current() else {
+        return (None, None);
+    };
+    entry.totp_code_cache = Some((zeroize::Zeroizing::new(code.clone()), expires_at));
+    (Some(code), Some((expires_at - now).to_string()))
 }
 
 fn render_custom_fields(ui: &imgui::Ui, entry: &PasswordEntry) {
@@ -253,16 +265,45 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Search", &mut state.search).build();
 
     let search_query = state.search.to_lowercase();
+    let visible_indices = if state
+        .search_cache
+        .as_ref()
+        .is_some_and(|(query, _)| query == &search_query)
+    {
+        state
+            .search_cache
+            .as_ref()
+            .map(|(_, indices)| indices.clone())
+            .unwrap_or_default()
+    } else {
+        let indices: Vec<usize> = state
+            .vault
+            .store
+            .as_ref()
+            .map(|store| {
+                store
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        entry_matches_search(entry, &search_query).then_some(index)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        state.search_cache = Some((search_query.clone(), indices.clone()));
+        indices
+    };
     let mut pending_copy: Option<(String, &'static str)> = None;
     let mut pending_error: Option<String> = None;
 
     if let Some(store) = &mut state.vault.store {
         ui.text(format!("Entry count: {}", store.entries.len()));
 
-        for entry in &mut store.entries {
-            if !entry_matches_search(entry, &search_query) {
+        for index in visible_indices {
+            let Some(entry) = store.entries.get_mut(index) else {
                 continue;
-            }
+            };
 
             let response = if entry.is_secure_note {
                 render_secure_note(ui, entry)

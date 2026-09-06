@@ -2,8 +2,12 @@ use crate::file_ops::{open_file_dialog, save_store};
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use crate::models::{ClipboardState, EntryForm, Generator, Modals, PasswordType, Vault};
 use crate::strength::{StrengthResult, manual_strength};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const INPUT_CAPACITY: usize = 256;
 const CLIPBOARD_CLEAR_SECS: u64 = 10;
@@ -99,7 +103,12 @@ impl ClipboardState {
             clear_at: None,
             copied_field: None,
             copied_clear_at: None,
+            external_copy_pending: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn backend_signal(&self) -> Arc<AtomicBool> {
+        self.external_copy_pending.clone()
     }
 
     fn clear_clipboard_text(&mut self) {
@@ -125,6 +134,7 @@ impl ClipboardState {
         self.clear_at = None;
         self.copied_field = None;
         self.copied_clear_at = None;
+        self.external_copy_pending.store(false, Ordering::Release);
     }
 
     fn copy(&mut self, text: &str, field_name: &str) {
@@ -135,6 +145,17 @@ impl ClipboardState {
         let now = Instant::now();
         self.clear_at = Some(now + Duration::from_secs(CLIPBOARD_CLEAR_SECS));
         self.copied_field = Some(field_name.to_string());
+        self.copied_clear_at = Some(now + Duration::from_secs(COPIED_NOTICE_SECS));
+    }
+
+    pub fn sync_external_copy(&mut self) {
+        if !self.external_copy_pending.swap(false, Ordering::AcqRel) {
+            return;
+        }
+
+        let now = Instant::now();
+        self.clear_at = Some(now + Duration::from_secs(CLIPBOARD_CLEAR_SECS));
+        self.copied_field = Some("value".to_string());
         self.copied_clear_at = Some(now + Duration::from_secs(COPIED_NOTICE_SECS));
     }
 }
@@ -163,6 +184,9 @@ impl AppState {
             strength_cache: None,
             hibp_cache: std::collections::HashMap::new(),
             hibp_pending: None,
+            hibp_cancel: None,
+            health_cache: None,
+            search_cache: None,
             should_exit: false,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
@@ -184,27 +208,61 @@ impl AppState {
     }
 
     pub fn close_file(&mut self) {
-        self.vault.store = None;
+        self.lock_file();
         self.vault.file_path = None;
         self.vault.file_name.clear();
-        self.vault.encryption_key = None;
-        self.vault.keyfile = None;
         self.vault.keyfile_hash = None;
-        self.vault.keyfile_bytes = None;
-        self.clear_inputs();
-        self.master_input = Zeroizing::new(String::new());
-        self.master_confirm_input = Zeroizing::new(String::new());
-        self.strength_cache = None;
-        self.edit_index = None;
-        self.delete_idx = None;
-        self.clipboard.reset();
-        self.hibp_cache.clear();
-        self.hibp_pending = None;
     }
 
     pub fn clear_inputs(&mut self) {
         self.form.clear();
         self.has_chosen_type = false;
+    }
+
+    pub fn invalidate_vault_caches(&mut self) {
+        self.health_cache = None;
+        self.search_cache = None;
+    }
+
+    pub fn cancel_unlock(&mut self) {
+        self.master_input.zeroize();
+        self.master_confirm_input.zeroize();
+        self.vault.keyfile = None;
+        self.vault.keyfile_bytes = None;
+        self.vault.keyfile_hash = None;
+        self.vault.file_path = None;
+        self.vault.file_name.clear();
+        self.vault.filesize = None;
+        self.filename_input.clear();
+        self.clear_inputs();
+        self.clipboard.reset();
+        self.modals.master_is_create = false;
+    }
+
+    pub fn lock_file(&mut self) {
+        self.vault.store = None;
+        self.vault.encryption_key = None;
+        self.vault.keyfile = None;
+        self.vault.keyfile_bytes = None;
+        self.clear_inputs();
+        self.master_input.zeroize();
+        self.master_confirm_input.zeroize();
+        self.self_destruct_pass.zeroize();
+        self.search.clear();
+        self.strength_cache = None;
+        self.hibp_cache.clear();
+        self.invalidate_vault_caches();
+        if let Some(cancel) = self.hibp_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.hibp_pending = None;
+        self.edit_index = None;
+        self.delete_idx = None;
+        self.custom_error_message = None;
+        self.custom_success_message = None;
+        self.modals = Modals::new();
+        self.clipboard.reset();
+        self.vault.last_activity = Instant::now();
     }
 
     pub fn cached_strength(&mut self, password: &str) -> StrengthResult {
@@ -238,11 +296,9 @@ impl AppState {
     }
 }
 
-pub fn hash_password(password: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    password.hash(&mut hasher);
-    hasher.finish()
+pub fn hash_password(password: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(password.as_bytes()).into()
 }
 
 #[cfg(test)]
@@ -306,6 +362,70 @@ mod tests {
             .clipboard
             .clear_expired(clear_at + Duration::from_secs(1));
         assert!(state.clipboard.clear_at.is_none());
+    }
+
+    #[test]
+    fn test_external_clipboard_copy_schedules_auto_clear() {
+        let mut state = AppState::new();
+        state
+            .clipboard
+            .external_copy_pending
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        state.clipboard.sync_external_copy();
+
+        assert!(state.clipboard.clear_at.is_some());
+        assert_eq!(state.clipboard.copied_field.as_deref(), Some("value"));
+    }
+
+    #[test]
+    fn test_cancel_unlock_clears_keyfile_and_path_state() {
+        let mut state = AppState::new();
+        state.vault.file_path = Some(PathBuf::from("/tmp/vault.aegis"));
+        state.vault.file_name = "vault.aegis".into();
+        state.vault.keyfile = Some(PathBuf::from("/tmp/keyfile.aegis"));
+        state.vault.keyfile_bytes = Some(Zeroizing::new(vec![1, 2, 3]));
+        state.vault.keyfile_hash = Some([4; 32]);
+        state.master_input = Zeroizing::new("secret".into());
+
+        state.cancel_unlock();
+
+        assert!(state.vault.file_path.is_none());
+        assert!(state.vault.keyfile.is_none());
+        assert!(state.vault.keyfile_bytes.is_none());
+        assert!(state.vault.keyfile_hash.is_none());
+        assert!(state.master_input.is_empty());
+    }
+
+    #[test]
+    fn test_lock_file_clears_sensitive_state_but_keeps_path() {
+        let mut state = AppState::new();
+        state.vault.store = Some(PasswordList { entries: vec![] });
+        state.vault.file_path = Some(PathBuf::from("/tmp/test.aegis"));
+        state.vault.encryption_key = Some(Zeroizing::new([1u8; 32]));
+        state.vault.keyfile = Some(PathBuf::from("/tmp/keyfile.aegis"));
+        state.vault.keyfile_bytes = Some(Zeroizing::new(vec![2u8; 32]));
+        state.form.password = Zeroizing::new("secret".into());
+        state.master_input = Zeroizing::new("master".into());
+        state.self_destruct_pass = Zeroizing::new("duress".into());
+        state.search = "secret".into();
+        state.modals.add_password = true;
+        let hibp_cancel = Arc::new(AtomicBool::new(false));
+        state.hibp_cancel = Some(hibp_cancel.clone());
+
+        state.lock_file();
+
+        assert!(state.vault.store.is_none());
+        assert!(state.vault.encryption_key.is_none());
+        assert!(state.vault.keyfile.is_none());
+        assert!(state.vault.keyfile_bytes.is_none());
+        assert!(state.vault.file_path.is_some());
+        assert!(state.form.password.is_empty());
+        assert!(state.master_input.is_empty());
+        assert!(state.self_destruct_pass.is_empty());
+        assert!(state.search.is_empty());
+        assert!(!state.modals.add_password);
+        assert!(hibp_cancel.load(Ordering::Acquire));
     }
 
     #[test]

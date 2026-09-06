@@ -12,6 +12,7 @@ pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
             ));
             store.entries.remove(idx);
         }
+        state.invalidate_vault_caches();
         state.save();
         state.delete_idx = None;
         ui.close_current_popup();

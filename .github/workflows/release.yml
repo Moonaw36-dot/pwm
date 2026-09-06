@@ -9,8 +9,28 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcb1-dev libxrandr-dev libxi-dev libxcursor-dev
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --locked
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
   build:
     name: Build ${{ matrix.target }}
+    needs: quality
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -89,10 +109,14 @@ jobs:
           mv artifacts/linux/aegis artifacts/aegis-linux-x86_64
           mv artifacts/windows/aegis.exe artifacts/aegis-windows-x86_64.exe
 
+      - name: Create checksums
+        run: sha256sum artifacts/aegis-* > artifacts/SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/aegis-linux-x86_64
             artifacts/aegis-windows-x86_64.exe
+            artifacts/SHA256SUMS
           generate_release_notes: true

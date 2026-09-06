@@ -16,6 +16,8 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
             imgui::Image::new(card_tex, [24.0, 24.0]).build(ui);
         }
 
+        ui.radio_button("Wi-Fi", &mut state.form.password_type, PasswordType::WiFi);
+
         if ui.button("Confirm") {
             ui.close_current_popup();
             state.has_chosen_type = true;

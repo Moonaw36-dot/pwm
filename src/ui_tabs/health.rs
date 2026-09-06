@@ -1,36 +1,37 @@
-use crate::models::{AppState, PasswordType};
+use crate::models::{AppState, HealthSummary, PasswordList, PasswordType};
 use crate::strength::{haveibeenpwned, manual_strength};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::TryRecvError;
 use zeroize::Zeroizing;
 
 pub fn mask_password(s: &str) -> String {
-    if s.len() <= 4 {
-        return "*".repeat(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= 4 {
+        return "*".repeat(chars.len());
     }
-    let prefix = &s[..2];
-    let suffix = &s[s.len() - 2..];
-    let stars = "*".repeat(s.len().saturating_sub(4));
+    let prefix: String = chars[..2].iter().collect();
+    let suffix: String = chars[chars.len() - 2..].iter().collect();
+    let stars = "*".repeat(chars.len().saturating_sub(4));
     format!("{prefix}{stars}{suffix}")
 }
 
-pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
-    if state.vault.store.is_none() {
-        ui.text("Open a file to get started.");
-        return;
-    }
+fn build_health_summary(store: &PasswordList) -> HealthSummary {
+    let mut weak_titles = Vec::new();
+    let mut seen: std::collections::HashMap<[u8; 32], Vec<String>> =
+        std::collections::HashMap::new();
+    let mut old_titles = Vec::new();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
 
-    if let Some(store) = &state.vault.store {
-        let mut weak_titles: Vec<String> = Vec::new();
-
-        for entry in &store.entries {
-            if entry.password_type != PasswordType::Normal {
-                continue;
-            }
-
-            if entry.is_secure_note {
-                continue;
-            }
-
+    for entry in &store.entries {
+        if entry.is_secure_note {
+            continue;
+        }
+        if entry.password_type == PasswordType::Normal || entry.password_type == PasswordType::WiFi
+        {
             let (score, _label, _) = manual_strength(entry.password.as_str());
             if score < 2 {
                 weak_titles.push(format!(
@@ -39,7 +40,54 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                     mask_password(&entry.password)
                 ));
             }
+            seen.entry(crate::app::hash_password(entry.password.as_str()))
+                .or_default()
+                .push(entry.username.clone());
         }
+        if let Some(created_at) = entry.created_at
+            && now > created_at
+            && now - created_at > THIRTY_DAYS
+        {
+            old_titles.push(format!(
+                "{} - {} is old! You should update it!",
+                entry.label,
+                mask_password(&entry.password)
+            ));
+        }
+    }
+
+    let reused_groups = seen
+        .into_values()
+        .filter(|labels| labels.len() > 1)
+        .collect();
+
+    HealthSummary {
+        weak_titles,
+        reused_groups,
+        old_titles,
+    }
+}
+
+pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
+    if state.vault.store.is_none() {
+        ui.text("Open a file to get started.");
+        return;
+    }
+
+    if state.health_cache.is_none()
+        && let Some(store) = &state.vault.store
+    {
+        state.health_cache = Some(build_health_summary(store));
+    }
+
+    let Some(summary) = state.health_cache.clone() else {
+        return;
+    };
+
+    if let Some(store) = &state.vault.store {
+        let weak_titles = summary.weak_titles;
+        let reused_groups = summary.reused_groups;
+        let old_titles = summary.old_titles;
 
         if !weak_titles.is_empty() {
             ui.text("Weak passwords: ");
@@ -49,23 +97,6 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
             ui.separator();
         }
 
-        use std::collections::HashMap;
-        let mut seen: HashMap<u64, Vec<&str>> = HashMap::new();
-
-        for entry in &store.entries {
-            if entry.password_type != PasswordType::Normal {
-                continue;
-            }
-
-            if entry.is_secure_note {
-                continue;
-            }
-
-            let hash = crate::app::hash_password(entry.password.as_str());
-            seen.entry(hash).or_default().push(entry.username.as_str());
-        }
-
-        let reused_groups: Vec<_> = seen.values().filter(|labels| labels.len() > 1).collect();
         if !reused_groups.is_empty() {
             ui.text("Reused passwords:");
             for labels in &reused_groups {
@@ -77,9 +108,11 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         if let Some((pw_hash, receiver, label)) = state.hibp_pending.take() {
             match receiver.try_recv() {
                 Ok(Ok(result)) => {
+                    state.hibp_cancel = None;
                     state.hibp_cache.insert(pw_hash, result);
                 }
                 Ok(Err(e)) => {
+                    state.hibp_cancel = None;
                     state.custom_error_message =
                         Some(format!("Failed to check HIBP for {label}: {e}"));
                     log::error!("HIBP error for {label}: {e}");
@@ -88,6 +121,7 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                     state.hibp_pending = Some((pw_hash, receiver, label));
                 }
                 Err(TryRecvError::Disconnected) => {
+                    state.hibp_cancel = None;
                     state.custom_error_message = Some(format!(
                         "Failed to check HIBP for {label}: background worker stopped"
                     ));
@@ -117,14 +151,17 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 let password = Zeroizing::new(entry.password.to_string());
                 let label = entry.label.clone();
                 let label_for_worker = label.clone();
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let worker_cancel = cancel.clone();
                 let (sender, receiver) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
                     let result = haveibeenpwned(password.as_str());
-                    if sender.send(result).is_err() {
+                    if !worker_cancel.load(Ordering::Acquire) && sender.send(result).is_err() {
                         log::error!("HIBP result receiver dropped for {label_for_worker}");
                     }
                 });
                 state.hibp_pending = Some((pw_hash, receiver, label));
+                state.hibp_cancel = Some(cancel);
             }
             if state.hibp_cache.get(&pw_hash) == Some(&true) {
                 pwned_indices.push(i);
@@ -159,31 +196,6 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
             ui.separator();
         }
 
-        const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let mut old_titles: Vec<String> = Vec::new();
-
-        for entry in &store.entries {
-            if entry.is_secure_note {
-                continue;
-            }
-
-            if let Some(created_at) = entry.created_at
-                && now > created_at
-                && now - created_at > THIRTY_DAYS
-            {
-                old_titles.push(format!(
-                    "{} - {} is old! You should update it!",
-                    entry.label,
-                    mask_password(&entry.password)
-                ));
-            }
-        }
-
         for title in &old_titles {
             ui.text(title);
         }
@@ -195,5 +207,16 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         {
             ui.text("Good job! Every password is safe!");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mask_password;
+
+    #[test]
+    fn mask_password_handles_unicode_boundaries() {
+        assert_eq!(mask_password("pässwörd"), "pä****rd");
+        assert_eq!(mask_password("秘密"), "**");
     }
 }

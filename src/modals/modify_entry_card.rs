@@ -47,7 +47,9 @@ pub fn render(ui: &Ui, state: &mut AppState) {
             ));
             entry.password_type = PasswordType::Card;
             entry.totp_cache = None;
+            entry.totp_code_cache = None;
             store.entries[idx] = entry;
+            state.invalidate_vault_caches();
             state.save();
             state.edit_index = None;
             state.clear_inputs();

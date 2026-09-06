@@ -3,37 +3,17 @@ use crate::models::PasswordType;
 use aes_gcm::aead::{Aead, OsRng};
 use aes_gcm::{AeadCore, Aes256Gcm, KeyInit};
 use argon2::Argon2;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use sha2::{Digest, Sha256};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const ITER_LEN: usize = 4;
 const HEADER_LEN: usize = SALT_LEN + ITER_LEN + NONCE_LEN;
 const HEADER_LEN_LEGACY: usize = SALT_LEN + NONCE_LEN;
-
-fn private_file_for_write(path: &Path) -> Result<std::fs::File, String> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-
-    let file = options.open(path).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(file)
-}
 
 fn set_private_permissions(path: &Path) -> Result<(), String> {
     #[cfg(not(unix))]
@@ -49,8 +29,17 @@ fn set_private_permissions(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
-    let mut file = private_file_for_write(path)?;
+fn write_private_file_new(path: &Path, data: &[u8]) -> Result<(), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path).map_err(|e| e.to_string())?;
     file.write_all(data).map_err(|e| e.to_string())?;
     file.sync_all().map_err(|e| e.to_string())?;
     drop(file);
@@ -59,11 +48,65 @@ fn write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
 
 fn temp_path_for(path: &Path) -> PathBuf {
     let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("vault");
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    path.with_file_name(format!(".{file_name}.{stamp}.tmp"))
+    let random = rand::rng().random::<u64>();
+    path.with_file_name(format!(".{file_name}.{random:016x}.tmp"))
+}
+
+fn replace_file(tmp: &Path, destination: &Path) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(tmp, destination).map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        };
+
+        let source: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
+        let target: Vec<u16> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let result = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                target.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn atomic_write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    let tmp = temp_path_for(path);
+    if let Err(error) = write_private_file_new(&tmp, data) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+
+    if let Err(error) = replace_file(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+
+    set_private_permissions(path)?;
+
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let directory = std::fs::File::open(parent).map_err(|e| e.to_string())?;
+        directory.sync_all().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 pub fn open_file_dialog() -> Option<(String, PathBuf)> {
@@ -126,6 +169,13 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
     let idx_notes = header_index(&headers, &["notes", "note", "comment"]);
     let idx_tags = header_index(&headers, &["tags", "tag"]);
     let idx_totp = header_index(&headers, &["totp_secret", "totp", "otp"]);
+    let idx_type = header_index(&headers, &["type", "password_type"]);
+    let idx_number = header_index(&headers, &["number", "card_number"]);
+    let idx_expiration = header_index(&headers, &["expiration_date", "expiry"]);
+    let idx_cvc = header_index(&headers, &["cvc"]);
+    let idx_secure_note = header_index(&headers, &["secure_note", "secure"]);
+    let idx_custom_fields = header_index(&headers, &["custom_fields", "fields"]);
+    let idx_favorite = header_index(&headers, &["favorite", "favourite"]);
 
     let mut entries = Vec::new();
     for result in reader.records() {
@@ -134,6 +184,31 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
         let tags = optional_record_value(&record, idx_tags)
             .map(|tags| tags.split(';').map(|s| s.trim().to_string()).collect());
         let totp_secret = optional_record_value(&record, idx_totp);
+        let password_type = match optional_record_value(&record, idx_type)
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("card") => PasswordType::Card,
+            Some("wifi") | Some("wi-fi") => PasswordType::WiFi,
+            _ => PasswordType::Normal,
+        };
+        let custom_fields = match optional_record_value(&record, idx_custom_fields) {
+            Some(value) => serde_json::from_str(&value)
+                .map_err(|error| format!("Invalid custom_fields JSON: {error}"))?,
+            None => Vec::new(),
+        };
+        let is_secure_note = optional_record_value(&record, idx_secure_note)
+            .is_some_and(|value| value.eq_ignore_ascii_case("true") || value == "1");
+        let favorite = optional_record_value(&record, idx_favorite).and_then(|value| {
+            if value.eq_ignore_ascii_case("true") || value == "1" {
+                Some(true)
+            } else if value.eq_ignore_ascii_case("false") || value == "0" {
+                Some(false)
+            } else {
+                None
+            }
+        });
 
         entries.push(PasswordEntry {
             label: record_value(&record, idx_label),
@@ -143,14 +218,16 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
             notes: Zeroizing::new(record_value(&record, idx_notes)),
             tags,
             totp_secret: totp_secret.into(),
-            custom_fields: Zeroizing::new(Vec::new()),
-            is_secure_note: false,
+            custom_fields: Zeroizing::new(custom_fields),
+            is_secure_note,
             created_at: None,
             totp_cache: None,
-            password_type: PasswordType::Normal,
-            number: None,
-            expiration_date: None,
-            cvc: None,
+            password_type,
+            number: optional_record_value(&record, idx_number).map(Zeroizing::new),
+            expiration_date: optional_record_value(&record, idx_expiration).map(Zeroizing::new),
+            cvc: optional_record_value(&record, idx_cvc).map(Zeroizing::new),
+            favorite,
+            totp_code_cache: None,
         });
     }
 
@@ -172,8 +249,8 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
         return Ok(());
     };
 
-    let file = private_file_for_write(&path)?;
-    let mut writer = csv::Writer::from_writer(file);
+    let mut csv_data = Zeroizing::new(Vec::new());
+    let mut writer = csv::Writer::from_writer(&mut *csv_data);
 
     writer
         .write_record([
@@ -184,6 +261,13 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
             "notes",
             "tags",
             "totp_secret",
+            "type",
+            "number",
+            "expiration_date",
+            "cvc",
+            "secure_note",
+            "custom_fields",
+            "favorite",
         ])
         .map_err(|e| e.to_string())?;
 
@@ -193,22 +277,61 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
             .as_deref()
             .map(|t| t.join(";"))
             .unwrap_or_default();
-        let totp = entry.totp_secret.as_deref().unwrap_or("");
+        let totp = entry.totp_secret.as_deref().unwrap_or("").to_string();
+        let entry_type = match entry.password_type {
+            PasswordType::Normal => "normal",
+            PasswordType::Card => "card",
+            PasswordType::WiFi => "wifi",
+        }
+        .to_string();
+        let number = entry
+            .number
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        let expiration = entry
+            .expiration_date
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        let cvc = entry
+            .cvc
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        let secure_note = entry.is_secure_note.to_string();
+        let custom_fields =
+            serde_json::to_string(&*entry.custom_fields).map_err(|e| e.to_string())?;
+        let favorite = entry
+            .favorite
+            .map(|value| value.to_string())
+            .unwrap_or_default();
         writer
             .write_record([
-                &entry.label,
-                &entry.username,
-                entry.password.as_str(),
-                &entry.url,
-                &entry.notes,
-                &tags,
+                entry.label.clone(),
+                entry.username.clone(),
+                entry.password.to_string(),
+                entry.url.clone(),
+                entry.notes.to_string(),
+                tags,
                 totp,
+                entry_type,
+                number,
+                expiration,
+                cvc,
+                secure_note,
+                custom_fields,
+                favorite,
             ])
             .map_err(|e| e.to_string())?;
     }
 
     writer.flush().map_err(|e| e.to_string())?;
-    set_private_permissions(&path)
+    drop(writer);
+    atomic_write_private_file(&path, &csv_data)
 }
 
 fn derive_key(
@@ -289,6 +412,13 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
         .unwrap_or(file_name)
         .to_string();
 
+    if state.vault.store.is_some() {
+        return Err("Close the current vault before creating a new one".to_string());
+    }
+    if path.exists() {
+        return Err("A vault already exists at that path".to_string());
+    }
+
     let empty_store = PasswordList {
         entries: Vec::new(),
     };
@@ -297,20 +427,16 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     rand::rng().fill_bytes(&mut salt);
 
     let iterations = state.form.iterations_entry as u32;
-    let key = derive_key(
-        &state.master_input,
-        &salt,
-        state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice()),
-        iterations,
-    )?;
+    let key = derive_key(&state.master_input, &salt, None, iterations)?;
     let filedata = encrypt_store(&empty_store, &key, &salt, iterations)?;
-    write_private_file(&path, &filedata)?;
+    write_private_file_new(&path, &filedata)?;
 
     state.vault.store = Some(empty_store);
     state.vault.encryption_key = Some(key);
     state.vault.file_path = Some(path);
     state.vault.file_name = vault_name;
     state.vault.iterations = iterations;
+    state.invalidate_vault_caches();
     Ok(())
 }
 
@@ -336,22 +462,23 @@ pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
     Ok(())
 }
 
-pub fn remember_keyfile_hash(state: &mut AppState) {
+pub fn remember_keyfile_hash(state: &mut AppState) -> Result<(), String> {
     if state.vault.keyfile_hash.is_some() {
-        return;
+        return Ok(());
     }
     let Some(bytes) = &state.vault.keyfile_bytes else {
-        return;
+        return Ok(());
     };
     let Some(vault_path) = &state.vault.file_path else {
-        return;
+        return Ok(());
     };
 
     let hash: [u8; 32] = Sha256::digest(bytes.as_slice()).into();
     let mut config = crate::config::load();
     config.keyfile_hashes.insert(vault_path.clone(), hash);
-    let _ = crate::config::save(&config);
+    crate::config::save(&config)?;
     state.vault.keyfile_hash = Some(hash);
+    Ok(())
 }
 
 pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
@@ -372,7 +499,11 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
 
     let hash: [u8; 32] = Sha256::digest(*key).into();
 
-    write_private_file(&path, key.as_ref())?;
+    let previous_keyfile = state.vault.keyfile.clone();
+    let previous_keyfile_hash = state.vault.keyfile_hash;
+    let previous_keyfile_bytes = state.vault.keyfile_bytes.clone();
+
+    write_private_file_new(&path, key.as_ref())?;
 
     state.vault.keyfile_hash = Some(hash);
     state.vault.keyfile = Some(path.clone());
@@ -398,6 +529,10 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
         ) {
             state.vault.encryption_key = Some(enc_key);
             state.vault.store = Some(store);
+            state.vault.keyfile = previous_keyfile;
+            state.vault.keyfile_hash = previous_keyfile_hash;
+            state.vault.keyfile_bytes = previous_keyfile_bytes;
+            let _ = std::fs::remove_file(&path);
             return Err(e);
         }
         state.vault.encryption_key = Some(new_key);
@@ -407,10 +542,121 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
     if let Some(vault_path) = &state.vault.file_path {
         let mut config = crate::config::load();
         config.keyfile_hashes.insert(vault_path.clone(), hash);
-        let _ = crate::config::save(&config);
+        crate::config::save(&config)?;
     }
 
     Ok(())
+}
+
+fn parse_iterations_from_header(data: &[u8]) -> u32 {
+    if data.len() >= SALT_LEN + ITER_LEN {
+        let val = u32::from_le_bytes(
+            data[SALT_LEN..SALT_LEN + ITER_LEN]
+                .try_into()
+                .unwrap_or([0; 4]),
+        );
+        if (1..=20).contains(&val) {
+            return val;
+        }
+    }
+    3
+}
+
+fn try_decrypt(
+    password: &str,
+    salt: &[u8; 16],
+    nonce: &[u8; 12],
+    ciphertext: &[u8],
+    m_cost: u32,
+    t_cost: u32,
+    keyfile_bytes: Option<&[u8]>,
+) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
+    let key = derive_key_params(password, salt, m_cost, t_cost, keyfile_bytes).ok()?;
+    let cipher = Aes256Gcm::new((&*key).into());
+    let plaintext = Zeroizing::new(cipher.decrypt(nonce.into(), ciphertext).ok()?);
+    let json = Zeroizing::new(String::from_utf8(plaintext.to_vec()).ok()?);
+    let store: PasswordList = serde_json::from_str(&json).ok()?;
+    Some((store, key))
+}
+
+pub fn load_store(
+    path: &PathBuf,
+    password: &str,
+    keyfile_bytes: Option<&[u8]>,
+) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
+    let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
+
+    if data.len() < SALT_LEN {
+        return Err("File is too short to be a valid store".to_string());
+    }
+
+    let salt: [u8; 16] = data[..SALT_LEN]
+        .try_into()
+        .map_err(|_| "Invalid salt".to_string())?;
+
+    if data.len() > HEADER_LEN_LEGACY {
+        let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY]
+            .try_into()
+            .map_err(|_| "Invalid nonce".to_string())?;
+        let ciphertext = &data[HEADER_LEN_LEGACY..];
+        for (m_cost, t_cost) in [(19456u32, 2u32), (65536u32, 3u32)] {
+            if let Some(result) = try_decrypt(
+                password,
+                &salt,
+                &nonce,
+                ciphertext,
+                m_cost,
+                t_cost,
+                keyfile_bytes,
+            ) {
+                return Ok(result);
+            }
+        }
+    }
+
+    if data.len() > HEADER_LEN {
+        let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN]
+            .try_into()
+            .map_err(|_| "Invalid nonce".to_string())?;
+        let ciphertext = &data[HEADER_LEN..];
+        let iterations = parse_iterations_from_header(&data);
+        if let Some(result) = try_decrypt(
+            password,
+            &salt,
+            &nonce,
+            ciphertext,
+            65536,
+            iterations,
+            keyfile_bytes,
+        )
+        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, keyfile_bytes))
+        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 19456, 2, keyfile_bytes))
+        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 2, keyfile_bytes))
+        {
+            return Ok(result);
+        }
+    }
+
+    Err("Decryption failed: wrong master password or corrupted file".to_string())
+}
+
+pub fn save_store(
+    path: &Option<PathBuf>,
+    store: &PasswordList,
+    key: &[u8; 32],
+    iterations: u32,
+) -> Result<(), String> {
+    let Some(p) = path else { return Ok(()) };
+
+    let mut existing =
+        std::fs::File::open(p).map_err(|e| format!("Failed to read vault before save: {e}"))?;
+    let mut salt = [0u8; SALT_LEN];
+    existing
+        .read_exact(&mut salt)
+        .map_err(|_| "File is too short to be a valid store".to_string())?;
+
+    let filedata = encrypt_store(store, key, &salt, iterations)?;
+    atomic_write_private_file(p, &filedata)
 }
 
 #[cfg(test)]
@@ -516,11 +762,38 @@ mod tests {
         assert_eq!(new_key, legacy_key);
     }
 
+    #[test]
+    fn test_save_and_load_current_format() {
+        let path = std::env::temp_dir().join(format!(
+            "aegis-save-test-{:016x}.aegis",
+            rand::rng().random::<u64>()
+        ));
+        let store = PasswordList {
+            entries: vec![PasswordEntry {
+                label: "saved".into(),
+                password: Zeroizing::new("secret".into()),
+                ..Default::default()
+            }],
+        };
+        let mut salt = [0u8; SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let key = derive_key_params("password", &salt, 65536, 3, None).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
+        write_private_file_new(&path, &encrypted).unwrap();
+
+        let loaded = load_store(&path, "password", None).unwrap();
+        assert_eq!(loaded.0.entries[0].label, "saved");
+        save_store(&Some(path.clone()), &store, &key, 3).unwrap();
+        let reloaded = load_store(&path, "password", None).unwrap();
+        assert_eq!(reloaded.0.entries[0].password.as_str(), "secret");
+        let _ = std::fs::remove_file(path);
+    }
+
     fn load_store_for_test(
         data: &[u8],
         password: &str,
     ) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-        if data.len() >= HEADER_LEN_LEGACY + 1 {
+        if data.len() > HEADER_LEN_LEGACY {
             let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
             let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY].try_into().ok()?;
             let ct = &data[HEADER_LEN_LEGACY..];
@@ -530,7 +803,7 @@ mod tests {
                 return Some(result);
             }
         }
-        if data.len() >= HEADER_LEN + 1 {
+        if data.len() > HEADER_LEN {
             let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
             let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().ok()?;
             let ct = &data[HEADER_LEN..];
@@ -542,123 +815,4 @@ mod tests {
             None
         }
     }
-}
-
-fn parse_iterations_from_header(data: &[u8]) -> u32 {
-    if data.len() >= SALT_LEN + ITER_LEN {
-        let val = u32::from_le_bytes(
-            data[SALT_LEN..SALT_LEN + ITER_LEN]
-                .try_into()
-                .unwrap_or([0; 4]),
-        );
-        if (1..=20).contains(&val) {
-            return val;
-        }
-    }
-    3
-}
-
-fn try_decrypt(
-    password: &str,
-    salt: &[u8; 16],
-    nonce: &[u8; 12],
-    ciphertext: &[u8],
-    m_cost: u32,
-    t_cost: u32,
-    keyfile_bytes: Option<&[u8]>,
-) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-    let key = derive_key_params(password, salt, m_cost, t_cost, keyfile_bytes).ok()?;
-    let cipher = Aes256Gcm::new((&*key).into());
-    let plaintext = cipher.decrypt(nonce.into(), ciphertext).ok()?;
-    let mut json = String::from_utf8(plaintext).ok()?;
-    let store: PasswordList = serde_json::from_str(&json).ok()?;
-    json.zeroize();
-    Some((store, key))
-}
-
-pub fn load_store(
-    path: &PathBuf,
-    password: &str,
-    keyfile_bytes: Option<&[u8]>,
-) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
-    let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
-
-    let existing = std::fs::read(path).map_err(|e| e.to_string())?;
-    if existing.len() < SALT_LEN {
-        return Err("File is too short to be a valid store".to_string());
-    }
-
-    let salt: [u8; 16] = data[..SALT_LEN]
-        .try_into()
-        .map_err(|_| "Invalid salt".to_string())?;
-
-    if data.len() > HEADER_LEN_LEGACY {
-        let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY]
-            .try_into()
-            .map_err(|_| "Invalid nonce".to_string())?;
-        let ciphertext = &data[HEADER_LEN_LEGACY..];
-        for (m_cost, t_cost) in [(19456u32, 2u32), (65536u32, 3u32)] {
-            if let Some(result) = try_decrypt(
-                password,
-                &salt,
-                &nonce,
-                ciphertext,
-                m_cost,
-                t_cost,
-                keyfile_bytes,
-            ) {
-                return Ok(result);
-            }
-        }
-    }
-
-    if data.len() > HEADER_LEN {
-        let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN]
-            .try_into()
-            .map_err(|_| "Invalid nonce".to_string())?;
-        let ciphertext = &data[HEADER_LEN..];
-        let iterations = parse_iterations_from_header(&data);
-        if let Some(result) = try_decrypt(
-            password,
-            &salt,
-            &nonce,
-            ciphertext,
-            65536,
-            iterations,
-            keyfile_bytes,
-        )
-        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, keyfile_bytes))
-        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 19456, 2, keyfile_bytes))
-        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 2, keyfile_bytes))
-        {
-            return Ok(result);
-        }
-    }
-
-    Err("Decryption failed: wrong master password or corrupted file".to_string())
-}
-
-pub fn save_store(
-    path: &Option<PathBuf>,
-    store: &PasswordList,
-    key: &[u8; 32],
-    iterations: u32,
-) -> Result<(), String> {
-    let Some(p) = path else { return Ok(()) };
-
-    let existing = std::fs::read(p).map_err(|e| e.to_string())?;
-    if existing.len() < SALT_LEN {
-        return Err("File is too short to be a valid store".to_string());
-    }
-    let salt = &existing[..SALT_LEN];
-
-    let filedata = encrypt_store(store, key, salt, iterations)?;
-    let tmp = temp_path_for(p);
-    write_private_file(&tmp, &filedata)?;
-    if let Err(e) = std::fs::rename(&tmp, p) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    set_private_permissions(p)?;
-    Ok(())
 }

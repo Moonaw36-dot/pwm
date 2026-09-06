@@ -24,7 +24,7 @@ Vault contents stay in files you control. Aegis does not provide cloud sync; the
 - Secure notes with masked display and click-to-copy note contents
 - Payment card entries with masked card display, issuer hints, Luhn validation, expiry, and CVC fields
 - URL opening for `http://` and `https://` entry links
-- CSV import/export for backup and migration
+- CSV import/export for backup and migration, including card, Wi-Fi, secure-note, TOTP, favorite, and custom-field data
 
 ### Password tooling
 
@@ -51,6 +51,40 @@ On Debian/Ubuntu-like Linux systems, the desktop stack may require packages such
 
 ```bash
 sudo apt install libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxi-dev libxcursor-dev
+```
+
+On NixOS, use the included traditional `shell.nix` and launcher. The shell supplies
+the X11, Wayland, and OpenGL libraries, including the dynamic library path required
+by winit and glutin:
+
+```bash
+cargo build --release
+./aegis
+```
+
+Do not launch `target/release/aegis` directly on NixOS, because that bypasses the
+library environment provided by the launcher. If you are already in the release
+directory, use:
+
+```bash
+nix-shell ../../shell.nix --run ./aegis
+```
+
+A working X11 or Wayland session and graphics driver are still required.
+
+To make it available in rofi's command mode, add the launcher to your local PATH:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf "$PWD/aegis" ~/.local/bin/aegis
+```
+
+For rofi's desktop mode, install a desktop entry with the absolute launcher path:
+
+```bash
+mkdir -p ~/.local/share/applications
+sed "s|^Exec=.*|Exec=$PWD/aegis|; s|^TryExec=.*|TryExec=$PWD/aegis|" \
+  aegis.desktop > ~/.local/share/applications/aegis.desktop
 ```
 
 ## Building and running
@@ -89,13 +123,13 @@ If a vault has a keyfile, future unlocks require both the master password and th
 
 CSV export writes plaintext passwords after a confirmation dialog. Treat exported files as sensitive and delete or encrypt them after use.
 
-The CSV format is intended for normal password entries and uses these columns:
+The CSV format uses these columns:
 
 ```csv
-label,username,password,url,notes,tags,totp_secret
+label,username,password,url,notes,tags,totp_secret,type,number,expiration_date,cvc,secure_note,custom_fields,favorite
 ```
 
-Tags are exported as a semicolon-separated value. CSV import accepts common header aliases such as `name`, `title`, `login`, `email`, `website`, `site`, `note`, `comment`, `tag`, `totp`, and `otp`.
+Tags are exported as a semicolon-separated value and custom fields as a JSON array. CSV import accepts common header aliases such as `name`, `title`, `login`, `email`, `website`, `site`, `note`, `comment`, `tag`, `totp`, and `otp`. CSV files contain plaintext secrets and should be deleted or encrypted after use.
 
 ## Controls
 
@@ -117,10 +151,10 @@ Copied values are cleared from the clipboard after 10 seconds.
 An Aegis vault is a binary file with this layout:
 
 ```text
-[16 bytes salt] [12 bytes nonce] [AES-256-GCM ciphertext]
+[16 bytes salt] [4 bytes little-endian Argon2id iterations] [12 bytes nonce] [AES-256-GCM ciphertext]
 ```
 
-The ciphertext decrypts to JSON containing the password entries. New vaults use Argon2id with 64 MiB of memory and 3 iterations. Older vaults created with legacy parameters can still be opened through a fallback path.
+The ciphertext decrypts to JSON containing the password entries. New vaults use Argon2id with 64 MiB of memory and a configurable iteration count. Older vaults created with legacy parameters can still be opened through a fallback path.
 
 A fresh nonce is generated on every save. Saves are written to a temporary file and then renamed over the original vault to reduce the chance of partial writes.
 
@@ -157,7 +191,7 @@ The config currently stores the auto-lock timeout and known keyfile hashes by va
 - There is no master-password recovery. If you forget the master password, the vault cannot be decrypted.
 - If you add a keyfile, losing the keyfile can make the vault unrecoverable.
 - There is no built-in sync, browser extension, or autofill integration.
-- CSV export is plaintext and does not fully round-trip every vault-only field such as card data or custom fields.
+- CSV export is plaintext. Treat exported files as sensitive and delete or encrypt them after use.
 - Clipboard-history exclusion is best-effort and platform-dependent.
 - Opening the Health tab may contact Have I Been Pwned using SHA-1 hash prefixes, not plaintext passwords.
 

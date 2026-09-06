@@ -23,6 +23,7 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Cancel##filename") {
         state.clear_inputs();
+        state.filename_input.clear();
         ui.close_current_popup();
     }
 }

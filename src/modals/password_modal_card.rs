@@ -108,6 +108,7 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.same_line();
     if ui.button("Close") {
+        state.clear_inputs();
         ui.close_current_popup();
     }
 }

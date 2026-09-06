@@ -63,16 +63,20 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
 
     if ui.button(button_label) {
         if !state.modals.master_is_create && config.duress.matches(&state.master_input) {
-            if let Some(ref path) = state.vault.file_path {
+            let destroyed_path = state.vault.file_path.clone();
+            if let Some(ref path) = destroyed_path {
                 let _ = std::fs::remove_file(path);
             }
-            state.master_input.zeroize();
-            state.master_confirm_input.zeroize();
-            state.vault.store = None;
-            state.vault.encryption_key = None;
+            if let Some(path) = destroyed_path {
+                let mut saved_config = config;
+                saved_config.keyfile_hashes.remove(&path);
+                let _ = crate::config::save(&saved_config);
+            }
+            state.lock_file();
             state.vault.file_path = None;
             state.vault.file_name.clear();
             state.vault.filesize = None;
+            state.vault.keyfile_hash = None;
             state.custom_success_message = Some(String::from("This vault has been destroyed."));
             state.modals.show_success = true;
             ui.close_current_popup();
@@ -121,7 +125,10 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
                 Ok((store, key)) => {
                     state.vault.store = Some(store);
                     state.vault.encryption_key = Some(key);
-                    crate::file_ops::remember_keyfile_hash(state);
+                    if let Err(error) = crate::file_ops::remember_keyfile_hash(state) {
+                        state.custom_error_message = Some(error);
+                    }
+                    state.invalidate_vault_caches();
                     state.master_input.zeroize();
                     state.master_confirm_input.zeroize();
                     ui.close_current_popup();
@@ -135,13 +142,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.same_line();
     if ui.button("Cancel") {
-        state.master_input.zeroize();
-        state.master_confirm_input.zeroize();
-        state.modals.master_is_create = false;
-        state.vault.file_path = None;
-        state.vault.file_name.clear();
-        state.vault.filesize = None;
-        state.filename_input.clear();
+        state.cancel_unlock();
         ui.close_current_popup();
     }
 }

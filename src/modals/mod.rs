@@ -87,11 +87,14 @@ fn add_entry_from_inputs(state: &mut AppState) {
         )
         .into(),
         cvc: std::mem::replace(&mut state.form.cvc, Zeroizing::new(String::new())).into(),
+        favorite: None,
+        totp_code_cache: None,
     };
 
     if let Some(store) = &mut state.vault.store {
         store.entries.push(entry);
     }
+    state.invalidate_vault_caches();
     state.save();
 }
 
@@ -239,8 +242,15 @@ pub(crate) fn render_entries_list(
                     mask_card_number(entry.number.as_deref())
                 ));
                 ui.same_line();
-            } else if entry.password_type == PasswordType::Normal {
-                ui.text(format!("{} - {}", entry.label, entry.username));
+            } else if entry.password_type == PasswordType::Normal
+                || entry.password_type == PasswordType::WiFi
+            {
+                let kind = if entry.password_type == PasswordType::WiFi {
+                    "Wi-Fi "
+                } else {
+                    ""
+                };
+                ui.text(format!("{}{} - {}", kind, entry.label, entry.username));
                 ui.same_line();
             }
 

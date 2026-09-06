@@ -43,6 +43,23 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         && let Some(idx) = state.edit_index
         && let Some(store) = &mut state.vault.store
     {
+        if let Err(error) = crate::modals::modify_entry::validate_normal_fields(
+            &state.form.label,
+            &state.form.username,
+            &state.form.password,
+            &state.form.notes,
+            state.form.is_secure_note,
+        ) {
+            state.custom_error_message = Some(error.to_string());
+            return;
+        }
+        if !state.form.is_secure_note
+            && !crate::strength::verify_password(&state.form.password).is_empty()
+        {
+            state.custom_error_message =
+                Some("Choose a stronger password before saving this entry.".to_string());
+            return;
+        }
         state.hibp_cache.remove(&crate::app::hash_password(
             store.entries[idx].password.as_str(),
         ));
@@ -71,7 +88,10 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             number: store.entries[idx].number.clone(),
             expiration_date: store.entries[idx].expiration_date.clone(),
             cvc: store.entries[idx].cvc.clone(),
+            favorite: store.entries[idx].favorite,
+            totp_code_cache: None,
         };
+        state.invalidate_vault_caches();
         state.save();
         state.edit_index = None;
         state.clear_inputs();

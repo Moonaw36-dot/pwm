@@ -35,10 +35,10 @@ pub(crate) fn set_excluded_from_history(clipboard: &mut arboard::Clipboard, text
 #[cfg(target_os = "windows")]
 fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
     use std::mem::size_of;
+    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::Memory::{
         GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
     };
