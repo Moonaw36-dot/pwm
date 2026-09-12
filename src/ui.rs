@@ -159,6 +159,15 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::generate_password_modal(ui, state);
     }
 
+    open_popup_once(
+        ui,
+        &mut state.modals.use_lastused_file,
+        "Use last used file",
+    );
+    if let Some(_token) = ui.begin_modal_popup("Use last used file") {
+        crate::modals::lastusedfile::use_lastused_file(ui, state);
+    }
+
     open_popup_once(ui, &mut state.modals.confirm_delete, "Confirm Delete");
 
     if let Some(_token) = ui.begin_modal_popup("Confirm Delete") {

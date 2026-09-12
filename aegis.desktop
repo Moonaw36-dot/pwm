@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Aegis
+Comment=Local-first desktop password manager
+Exec=aegis
+TryExec=aegis
+Terminal=false
+Categories=Utility;Security;

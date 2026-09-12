@@ -85,6 +85,8 @@ pub struct Config {
     pub self_destruct_pass: Zeroizing<String>,
     #[serde(default)]
     pub keyfile_hashes: HashMap<PathBuf, [u8; 32]>,
+    #[serde(default)]
+    pub last_used_file: PathBuf,
 }
 
 impl Default for Config {
@@ -95,6 +97,7 @@ impl Default for Config {
             duress: Duress::default(),
             self_destruct_pass: Zeroizing::new(String::new()),
             keyfile_hashes: Default::default(),
+            last_used_file: PathBuf::new(),
         }
     }
 }

@@ -1,3 +1,4 @@
+use crate::config;
 use crate::file_ops::{open_file_dialog, save_store};
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use crate::models::{ClipboardState, EntryForm, Generator, Modals, PasswordType, Vault};
@@ -88,6 +89,7 @@ impl Modals {
             master_is_create: false,
             confirm_delete: false,
             show_success: false,
+            use_lastused_file: false,
         }
     }
 }
@@ -164,11 +166,14 @@ impl AppState {
     pub fn new() -> Self {
         let config = crate::config::load();
 
+        let mut modals = Modals::new();
+        modals.use_lastused_file = config.last_used_file.is_file();
+
         Self {
             vault: Vault::new(&config),
             form: EntryForm::new(),
             generator: Generator::new(),
-            modals: Modals::new(),
+            modals,
             clipboard: ClipboardState::new(),
 
             has_chosen_type: false,
@@ -200,7 +205,9 @@ impl AppState {
         if let Some((name, path)) = open_file_dialog() {
             self.close_file();
             self.vault.file_name = name;
-            let config = crate::config::load();
+            let mut config = crate::config::load();
+            config.last_used_file = path.clone();
+            let _ = config::save(&config);
             self.vault.keyfile_hash = config.keyfile_hashes.get(path.as_path()).copied();
             self.vault.file_path = Some(path);
             self.modals.master = true;

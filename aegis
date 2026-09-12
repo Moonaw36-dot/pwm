@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+BINARY="$ROOT_DIR/target/release/aegis"
+
+if [[ ! -x "$BINARY" ]]; then
+    printf 'Aegis is not built. Run: cargo build --release\n' >&2
+    exit 1
+fi
+
+printf -v QUOTED_BINARY '%q' "$BINARY"
+exec nix-shell "$ROOT_DIR/shell.nix" --run "exec $QUOTED_BINARY"

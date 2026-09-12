@@ -32,8 +32,6 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
         "Unlock"
     };
 
-    let config = config::load();
-
     if state.vault.keyfile.is_some() {
         ui.text("Keyfile selected.");
         if ui.button("Clear keyfile") {
@@ -62,6 +60,7 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if ui.button(button_label) {
+        let config = config::load();
         if !state.modals.master_is_create && config.duress.matches(&state.master_input) {
             let destroyed_path = state.vault.file_path.clone();
             if let Some(ref path) = destroyed_path {

@@ -3,6 +3,7 @@ pub mod custom_error;
 pub mod enter_master_password;
 pub mod error_password;
 pub mod generate_password;
+pub mod lastusedfile;
 pub mod modify_entry;
 mod modify_entry_card;
 mod modify_entry_normal;
