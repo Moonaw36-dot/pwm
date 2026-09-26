@@ -1,6 +1,7 @@
 use argon2::Argon2;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use sha1::digest::consts::False;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use zeroize::Zeroizing;
@@ -87,6 +88,8 @@ pub struct Config {
     pub keyfile_hashes: HashMap<PathBuf, [u8; 32]>,
     #[serde(default)]
     pub last_used_file: PathBuf,
+    #[serde(default)]
+    pub hide_user: bool,
 }
 
 impl Default for Config {
@@ -98,6 +101,7 @@ impl Default for Config {
             self_destruct_pass: Zeroizing::new(String::new()),
             keyfile_hashes: Default::default(),
             last_used_file: PathBuf::new(),
+            hide_user: false,
         }
     }
 }

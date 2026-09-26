@@ -1,5 +1,5 @@
 use crate::models::{AppState, PasswordEntry, PasswordType};
-use crate::theme;
+use crate::{config, theme};
 use totp_rs::{Algorithm, TOTP};
 
 const TOTP_STEP_SECS: u64 = 30;
@@ -47,6 +47,10 @@ fn masked_card_number(entry: &PasswordEntry) -> String {
             }
         })
         .unwrap_or_default()
+}
+
+fn mask_user(entry: &PasswordEntry) -> String {
+    "*".repeat(entry.username.len())
 }
 
 fn render_secure_note(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
@@ -194,7 +198,11 @@ fn render_normal_entry(
             "{}[{}] | {}{}{}",
             tags_prefix(entry.tags.as_deref()),
             entry.label,
-            entry.username,
+            if config::load().hide_user {
+                mask_user(entry)
+            } else {
+                entry.username.clone()
+            },
             notes_part,
             totp_suffix
         ));

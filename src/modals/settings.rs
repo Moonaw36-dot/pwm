@@ -34,6 +34,9 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
         .build();
     ui.text_disabled("Stored as a salted hash. Leave empty to disable.");
 
+    ui.checkbox("Hide Email", &mut state.hide_user);
+    ui.text_disabled("This will censor your username / email in the \"View passwords\" tab.");
+
     if ui.button("Save") {
         state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
         state.light_mode = state.settings_light_mode;
@@ -43,6 +46,7 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
         config.lock_timeout_secs = state.vault.lock_timeout_secs;
         config.duress.set(&state.self_destruct_pass);
         state.self_destruct_pass = Zeroizing::new(String::new());
+        config.hide_user = state.hide_user;
 
         if let Err(e) = crate::config::save(&config) {
             state.custom_error_message = Some(e);

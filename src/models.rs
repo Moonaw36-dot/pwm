@@ -160,6 +160,7 @@ pub struct AppState {
     pub light_mode: bool,
     pub settings_light_mode: bool,
     pub self_destruct_pass: Zeroizing<String>,
+    pub hide_user: bool,
 
     pub card_texture: Option<imgui::TextureId>,
 }

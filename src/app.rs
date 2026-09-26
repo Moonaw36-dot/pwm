@@ -195,6 +195,7 @@ impl AppState {
             should_exit: false,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
+            hide_user: config.hide_user,
             // input buffer only; the stored value is a hash
             self_destruct_pass: Zeroizing::new(String::new()),
             card_texture: None,
