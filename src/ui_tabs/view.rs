@@ -1,5 +1,5 @@
 use crate::models::{AppState, PasswordEntry, PasswordType};
-use crate::{config, theme};
+use crate::theme;
 use totp_rs::{Algorithm, TOTP};
 
 const TOTP_STEP_SECS: u64 = 30;
@@ -49,8 +49,10 @@ fn masked_card_number(entry: &PasswordEntry) -> String {
         .unwrap_or_default()
 }
 
-fn mask_user(entry: &PasswordEntry) -> String {
-    "*".repeat(entry.username.len())
+const MASKED_USER: &str = "********";
+
+fn mask_user() -> &'static str {
+    MASKED_USER
 }
 
 fn render_secure_note(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
@@ -179,6 +181,7 @@ fn render_normal_entry(
     entry: &PasswordEntry,
     totp_code: Option<&str>,
     totp_timeout: Option<&str>,
+    hide_user: bool,
 ) -> EntryResponse {
     let mut response = EntryResponse::default();
     let url_clicked = std::cell::Cell::new(false);
@@ -198,10 +201,10 @@ fn render_normal_entry(
             "{}[{}] | {}{}{}",
             tags_prefix(entry.tags.as_deref()),
             entry.label,
-            if config::load().hide_user {
-                mask_user(entry)
+            if hide_user {
+                mask_user()
             } else {
-                entry.username.clone()
+                entry.username.as_str()
             },
             notes_part,
             totp_suffix
@@ -304,6 +307,7 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     };
     let mut pending_copy: Option<(String, &'static str)> = None;
     let mut pending_error: Option<String> = None;
+    let hide_user = state.hide_user;
 
     if let Some(store) = &mut state.vault.store {
         ui.text(format!("Entry count: {}", store.entries.len()));
@@ -320,7 +324,13 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
             } else {
                 ensure_totp_cache(entry);
                 let (totp_code, totp_timeout) = current_totp(entry);
-                render_normal_entry(ui, entry, totp_code.as_deref(), totp_timeout.as_deref())
+                render_normal_entry(
+                    ui,
+                    entry,
+                    totp_code.as_deref(),
+                    totp_timeout.as_deref(),
+                    hide_user,
+                )
             };
 
             if let Some(copy) = response.copy {
