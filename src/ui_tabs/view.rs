@@ -1,5 +1,5 @@
 use crate::models::{AppState, PasswordEntry, PasswordType};
-use crate::theme;
+use crate::{config, theme};
 use totp_rs::{Algorithm, TOTP};
 
 const TOTP_STEP_SECS: u64 = 30;
@@ -235,9 +235,23 @@ fn render_normal_entry(
     });
 
     if !url_clicked.get() {
-        if ui.is_item_clicked() {
+        let config = config::load();
+
+        let copy_password_button: imgui::MouseButton = if config.invert_copy_controls {
+            imgui::MouseButton::Right
+        } else {
+            imgui::MouseButton::Left
+        };
+
+        let copy_username_button: imgui::MouseButton = if config.invert_copy_controls {
+            imgui::MouseButton::Left
+        } else {
+            imgui::MouseButton::Right
+        };
+
+        if ui.is_item_clicked_with_button(copy_password_button) {
             response.copy = Some((entry.password.to_string(), "password"));
-        } else if ui.is_item_clicked_with_button(imgui::MouseButton::Right) {
+        } else if ui.is_item_clicked_with_button(copy_username_button) {
             response.copy = Some((entry.username.clone(), "username"));
         } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
             && let Some(code) = totp_code
@@ -247,11 +261,19 @@ fn render_normal_entry(
 
         if ui.is_item_hovered() {
             ui.tooltip(|| {
-                ui.text("Left click to copy the password.");
-                ui.separator();
-                ui.text("Right click to copy the username.");
-                ui.separator();
-                ui.text("Middle click to copy the TOTP.");
+                if config.invert_copy_controls {
+                    ui.text("Left click to copy the username.");
+                    ui.separator();
+                    ui.text("Middle click to copy the TOTP.");
+                    ui.separator();
+                    ui.text("Right click to copy the password.");
+                } else {
+                    ui.text("Right click to copy the username.");
+                    ui.separator();
+                    ui.text("Middle click to copy the TOTP.");
+                    ui.separator();
+                    ui.text("Left click to copy the password.");
+                }
                 render_custom_fields(ui, entry);
             });
         }

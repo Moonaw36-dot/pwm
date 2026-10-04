@@ -127,7 +127,7 @@ fn render_tabs(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 fn render_about_tab(ui: &imgui::Ui) {
-    ui.text("Aegis — a password manager written in Rust, by Moonaw.");
+    ui.text("Aegis, a password manager written in Rust, by Moonaw.");
     ui.separator();
 
     let _color = ui.push_style_color(imgui::StyleColor::Text, theme::LINK_COLOR);

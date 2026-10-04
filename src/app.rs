@@ -198,6 +198,7 @@ impl AppState {
             hide_user: config.hide_user,
             // input buffer only; the stored value is a hash
             self_destruct_pass: Zeroizing::new(String::new()),
+            invert_copy_controls: false,
             card_texture: None,
         }
     }
