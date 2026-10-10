@@ -10,4 +10,20 @@ if [[ ! -x "$BINARY" ]]; then
 fi
 
 printf -v QUOTED_BINARY '%q' "$BINARY"
-exec nix-shell "$ROOT_DIR/shell.nix" --run "exec $QUOTED_BINARY"
+quoted=("$QUOTED_BINARY")
+for arg in "$@"; do
+    printf -v q '%q' "$arg"
+    quoted+=("$q")
+done
+
+if command -v nix-shell >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    exec nix-shell "$ROOT_DIR/shell.nix" --run "exec ${quoted[*]}"
+fi
+
+# Fallback for systems without nix-shell (non-NixOS or minimal env).
+# Include system nix-ld libraries when present so Wayland/X11 resolve.
+if [[ -d /run/current-system/sw/share/nix-ld/lib ]]; then
+    export LD_LIBRARY_PATH="/run/current-system/sw/share/nix-ld/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+exec "$BINARY" "$@"

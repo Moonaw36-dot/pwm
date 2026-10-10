@@ -1,5 +1,5 @@
-use crate::models::{AppState, PasswordEntry, PasswordType};
-use crate::{config, theme};
+use crate::models::{AppState, PasswordEntry, PasswordType, is_trashed};
+use crate::theme;
 use totp_rs::{Algorithm, TOTP};
 
 const TOTP_STEP_SECS: u64 = 30;
@@ -20,6 +20,7 @@ fn entry_matches_search(entry: &PasswordEntry, query: &str) -> bool {
     query.is_empty()
         || entry.label.to_lowercase().contains(query)
         || entry.username.to_lowercase().contains(query)
+        || entry.url.to_lowercase().contains(query)
         || entry
             .tags
             .as_deref()
@@ -115,6 +116,21 @@ fn render_card_entry(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
     response
 }
 
+fn build_totp(secret: &str) -> Option<TOTP> {
+    let secret = secret.trim();
+    if secret.is_empty() {
+        return None;
+    }
+
+    if secret.starts_with("otpauth://") {
+        return TOTP::<Vec<u8>>::from_url(secret).ok();
+    }
+
+    let clean_secret = secret.replace(' ', "").to_uppercase();
+    let bytes = base32::decode(base32::Alphabet::RFC4648 { padding: false }, &clean_secret)?;
+    TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string()).ok()
+}
+
 fn ensure_totp_cache(entry: &mut PasswordEntry) {
     if entry.totp_secret.is_none() || entry.totp_cache.is_some() {
         return;
@@ -124,15 +140,9 @@ fn ensure_totp_cache(entry: &mut PasswordEntry) {
         return;
     };
 
-    let clean_secret = secret.replace(" ", "").to_uppercase();
-    if let Some(bytes) = base32::decode(base32::Alphabet::RFC4648 { padding: false }, &clean_secret)
-    {
-        match TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string()) {
-            Ok(totp) => entry.totp_cache = Some(totp),
-            Err(error) => log::error!("TOTP error for {}: {:?}", entry.label, error),
-        }
-    } else {
-        log::error!("Failed to decode Base32 secret for {}", entry.label);
+    match build_totp(secret) {
+        Some(totp) => entry.totp_cache = Some(totp),
+        None => log::error!("Failed to build TOTP for {}", entry.label),
     }
 }
 
@@ -182,6 +192,7 @@ fn render_normal_entry(
     totp_code: Option<&str>,
     totp_timeout: Option<&str>,
     hide_user: bool,
+    invert_copy_controls: bool,
 ) -> EntryResponse {
     let mut response = EntryResponse::default();
     let url_clicked = std::cell::Cell::new(false);
@@ -235,15 +246,13 @@ fn render_normal_entry(
     });
 
     if !url_clicked.get() {
-        let config = config::load();
-
-        let copy_password_button: imgui::MouseButton = if config.invert_copy_controls {
+        let copy_password_button: imgui::MouseButton = if invert_copy_controls {
             imgui::MouseButton::Right
         } else {
             imgui::MouseButton::Left
         };
 
-        let copy_username_button: imgui::MouseButton = if config.invert_copy_controls {
+        let copy_username_button: imgui::MouseButton = if invert_copy_controls {
             imgui::MouseButton::Left
         } else {
             imgui::MouseButton::Right
@@ -261,7 +270,7 @@ fn render_normal_entry(
 
         if ui.is_item_hovered() {
             ui.tooltip(|| {
-                if config.invert_copy_controls {
+                if invert_copy_controls {
                     ui.text("Left click to copy the username.");
                     ui.separator();
                     ui.text("Middle click to copy the TOTP.");
@@ -318,6 +327,7 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                     .entries
                     .iter()
                     .enumerate()
+                    .filter(|(_, entry)| !is_trashed(entry))
                     .filter_map(|(index, entry)| {
                         entry_matches_search(entry, &search_query).then_some(index)
                     })
@@ -330,9 +340,15 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     let mut pending_copy: Option<(String, &'static str)> = None;
     let mut pending_error: Option<String> = None;
     let hide_user = state.hide_user;
+    let invert_copy_controls = state.invert_copy_controls;
 
     if let Some(store) = &mut state.vault.store {
-        ui.text(format!("Entry count: {}", store.entries.len()));
+        let visible_count = store
+            .entries
+            .iter()
+            .filter(|entry| !is_trashed(entry))
+            .count();
+        ui.text(format!("Entry count: {visible_count}"));
 
         for index in visible_indices {
             let Some(entry) = store.entries.get_mut(index) else {
@@ -352,6 +368,7 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
                     totp_code.as_deref(),
                     totp_timeout.as_deref(),
                     hide_user,
+                    invert_copy_controls,
                 )
             };
 
@@ -375,5 +392,53 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
     if let Some(field) = &state.clipboard.copied_field {
         ui.separator();
         ui.text(format!("The {} has been copied to the clipboard!", field));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OTPAUTH_URI: &str =
+        "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example";
+
+    #[test]
+    fn build_totp_parses_otpauth_uri() {
+        let totp = build_totp(OTPAUTH_URI).expect("otpauth URI should parse");
+        assert_eq!(totp.digits, 6);
+        assert_eq!(totp.step, 30);
+
+        let code = totp.generate_current().expect("code should generate");
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn build_totp_normalizes_raw_base32() {
+        let totp = build_totp("jbsw y3dp").expect("raw base32 should build");
+        assert_eq!(totp.algorithm, Algorithm::SHA1);
+        assert_eq!(totp.digits, 6);
+        assert_eq!(totp.step, 30);
+    }
+
+    #[test]
+    fn build_totp_rejects_invalid_and_empty_secrets() {
+        assert!(build_totp("").is_none());
+        assert!(build_totp("   ").is_none());
+        assert!(build_totp("not base32!!").is_none());
+    }
+
+    #[test]
+    fn entry_matches_search_matches_url() {
+        let entry = PasswordEntry {
+            label: "Example".to_string(),
+            url: "https://github.com/alice".to_string(),
+            ..Default::default()
+        };
+
+        assert!(entry_matches_search(&entry, "github"));
+        assert!(entry_matches_search(&entry, "/alice"));
+        assert!(entry_matches_search(&entry, ""));
+        assert!(!entry_matches_search(&entry, "gitlab"));
     }
 }

@@ -1,5 +1,5 @@
 use crate::config;
-use crate::file_ops::{open_file_dialog, save_store};
+use crate::file_ops::{VaultKdfParams, open_file_dialog, save_store};
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
 use crate::models::{ClipboardState, EntryForm, Generator, Modals, PasswordType, Vault};
 use crate::strength::{StrengthResult, manual_strength};
@@ -25,6 +25,7 @@ impl Vault {
             last_activity: Instant::now(),
             lock_timeout_secs: config.lock_timeout_secs,
             iterations: 3,
+            kdf_params: None,
             keyfile: None,
             keyfile_hash: None,
             keyfile_bytes: None,
@@ -184,15 +185,20 @@ impl AppState {
             settings_timeout_mins: 0,
             edit_index: None,
             delete_idx: None,
+            trash_purge_pending: None,
+            trash_empty_pending: false,
             custom_error_message: None,
             custom_success_message: None,
             strength_cache: None,
+            generated_password: Zeroizing::new(String::new()),
             hibp_cache: std::collections::HashMap::new(),
-            hibp_pending: None,
+            hibp_pending: Vec::new(),
             hibp_cancel: None,
             health_cache: None,
             search_cache: None,
             should_exit: false,
+            failed_unlocks: 0,
+            unlock_penalty_until: None,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
             hide_user: config.hide_user,
@@ -239,6 +245,7 @@ impl AppState {
         self.vault.keyfile = None;
         self.vault.keyfile_bytes = None;
         self.vault.keyfile_hash = None;
+        self.vault.kdf_params = None;
         self.vault.file_path = None;
         self.vault.file_name.clear();
         self.vault.filesize = None;
@@ -251,6 +258,7 @@ impl AppState {
     pub fn lock_file(&mut self) {
         self.vault.store = None;
         self.vault.encryption_key = None;
+        self.vault.kdf_params = None;
         self.vault.keyfile = None;
         self.vault.keyfile_bytes = None;
         self.clear_inputs();
@@ -264,9 +272,11 @@ impl AppState {
         if let Some(cancel) = self.hibp_cancel.take() {
             cancel.store(true, Ordering::Release);
         }
-        self.hibp_pending = None;
+        self.hibp_pending = Vec::new();
         self.edit_index = None;
         self.delete_idx = None;
+        self.trash_purge_pending = None;
+        self.trash_empty_pending = false;
         self.custom_error_message = None;
         self.custom_success_message = None;
         self.modals = Modals::new();
@@ -293,7 +303,12 @@ impl AppState {
         if let Some(key) = &self.vault.encryption_key
             && let Some(store) = &self.vault.store
         {
-            save_store(&self.vault.file_path, store, key, self.vault.iterations)?;
+            let params = self.vault.kdf_params.unwrap_or(VaultKdfParams {
+                m_cost: 65536,
+                t_cost: self.vault.iterations,
+                p_cost: 1,
+            });
+            save_store(&self.vault.file_path, store, key, params)?;
         }
         Ok(())
     }
@@ -310,10 +325,35 @@ pub fn hash_password(password: &str) -> [u8; 32] {
     Sha256::digest(password.as_bytes()).into()
 }
 
+/// Backoff before the next unlock attempt, in seconds, after the given number
+/// of failed attempts. The first three failures are free; each subsequent
+/// failure doubles the wait, capped at one minute. This is an in-app speed
+/// bump only: it resets when the app restarts and does not protect the vault
+/// file from offline attacks — Argon2id remains the real defense.
+pub fn unlock_penalty_secs(failed_unlocks: u32) -> u64 {
+    if failed_unlocks < 3 {
+        return 0;
+    }
+    1u64 << (failed_unlocks - 3).min(6)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_unlock_penalty_schedule() {
+        assert_eq!(unlock_penalty_secs(0), 0);
+        assert_eq!(unlock_penalty_secs(1), 0);
+        assert_eq!(unlock_penalty_secs(2), 0);
+        assert_eq!(unlock_penalty_secs(3), 1);
+        assert_eq!(unlock_penalty_secs(4), 2);
+        assert_eq!(unlock_penalty_secs(5), 4);
+        assert_eq!(unlock_penalty_secs(8), 32);
+        assert_eq!(unlock_penalty_secs(9), 64);
+        assert_eq!(unlock_penalty_secs(50), 64);
+    }
 
     #[test]
     fn test_cached_strength_cache_hit() {
@@ -411,7 +451,7 @@ mod tests {
         let mut state = AppState::new();
         state.vault.store = Some(PasswordList { entries: vec![] });
         state.vault.file_path = Some(PathBuf::from("/tmp/test.aegis"));
-        state.vault.encryption_key = Some(Zeroizing::new([1u8; 32]));
+        state.vault.encryption_key = Some(crate::locked_buf::LockedKey::from_array([1u8; 32]));
         state.vault.keyfile = Some(PathBuf::from("/tmp/keyfile.aegis"));
         state.vault.keyfile_bytes = Some(Zeroizing::new(vec![2u8; 32]));
         state.form.password = Zeroizing::new("secret".into());
@@ -443,7 +483,7 @@ mod tests {
         state.vault.store = Some(PasswordList { entries: vec![] });
         state.vault.file_path = Some(PathBuf::from("/tmp/test.aegis"));
         state.vault.file_name = "test".into();
-        state.vault.encryption_key = Some(Zeroizing::new([1u8; 32]));
+        state.vault.encryption_key = Some(crate::locked_buf::LockedKey::from_array([1u8; 32]));
 
         state.close_file();
 

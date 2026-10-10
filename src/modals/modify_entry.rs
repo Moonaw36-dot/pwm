@@ -12,8 +12,14 @@ pub fn parse_tags(s: String) -> Option<Vec<String>> {
 }
 
 pub fn sanitize_totp(s: impl AsRef<str>) -> Option<String> {
-    let s = s.as_ref().trim().replace(' ', "").to_uppercase();
-    if s.is_empty() { None } else { Some(s) }
+    let s = s.as_ref().trim();
+    if s.is_empty() {
+        return None;
+    }
+    if s.starts_with("otpauth://") {
+        return Some(s.to_string());
+    }
+    Some(s.replace(' ', "").to_uppercase())
 }
 
 pub(crate) fn validate_normal_fields(
@@ -55,7 +61,7 @@ pub fn modify_entry_modal(ui: &imgui::Ui, state: &mut AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_normal_fields;
+    use super::{sanitize_totp, validate_normal_fields};
 
     #[test]
     fn normal_entries_require_label_username_and_password() {
@@ -69,5 +75,24 @@ mod tests {
     fn secure_notes_require_label_and_notes() {
         assert!(validate_normal_fields("label", "", "", "note", true).is_ok());
         assert!(validate_normal_fields("label", "", "", "", true).is_err());
+    }
+
+    #[test]
+    fn sanitize_totp_preserves_otpauth_uri_verbatim() {
+        let uri = "otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example";
+        assert_eq!(sanitize_totp(uri).as_deref(), Some(uri));
+        assert_eq!(
+            sanitize_totp(format!("  {uri} ")).as_deref(),
+            Some(uri),
+            "surrounding whitespace is trimmed, URI kept verbatim"
+        );
+    }
+
+    #[test]
+    fn sanitize_totp_normalizes_raw_base32() {
+        assert_eq!(sanitize_totp("jbsw y3dp").as_deref(), Some("JBSWY3DP"));
+        assert_eq!(sanitize_totp("  jbsw y3dp  ").as_deref(), Some("JBSWY3DP"));
+        assert_eq!(sanitize_totp("").as_deref(), None);
+        assert_eq!(sanitize_totp("   ").as_deref(), None);
     }
 }

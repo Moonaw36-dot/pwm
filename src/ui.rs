@@ -120,6 +120,9 @@ fn render_tabs(ui: &imgui::Ui, state: &mut AppState) {
         imgui::TabItem::new("Health").build(ui, || {
             ui_tabs::render_health_tab(ui, state);
         });
+        imgui::TabItem::new("Trash").build(ui, || {
+            ui_tabs::render_trash_tab(ui, state);
+        });
         imgui::TabItem::new("About").build(ui, || {
             render_about_tab(ui);
         });

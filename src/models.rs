@@ -1,3 +1,4 @@
+use crate::file_ops::VaultKdfParams;
 use crate::strength::GenMode;
 use crate::strength::StrengthResult;
 use arboard::Clipboard;
@@ -7,6 +8,41 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Instant;
 use totp_rs::TOTP;
 use zeroize::Zeroizing;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PasswordHistory {
+    pub password: Zeroizing<String>,
+    pub changed_at: u64,
+}
+
+pub const PASSWORD_HISTORY_CAP: usize = 10;
+
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+pub fn is_trashed(entry: &PasswordEntry) -> bool {
+    entry.trashed_at.is_some()
+}
+
+pub fn record_password_change(entry: &mut PasswordEntry, new_password: &str, now: u64) {
+    if entry.password.as_str() == new_password {
+        return;
+    }
+
+    entry.password_history.push(PasswordHistory {
+        password: entry.password.clone(),
+        changed_at: now,
+    });
+
+    if entry.password_history.len() > PASSWORD_HISTORY_CAP {
+        let overflow = entry.password_history.len() - PASSWORD_HISTORY_CAP;
+        entry.password_history.drain(..overflow);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -26,6 +62,10 @@ pub struct PasswordEntry {
     pub expiration_date: Option<Zeroizing<String>>,
     pub cvc: Option<Zeroizing<String>>,
     pub favorite: Option<bool>,
+    #[serde(default)]
+    pub trashed_at: Option<u64>,
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistory>,
     #[serde(skip)]
     pub totp_cache: Option<TOTP>,
     #[serde(skip)]
@@ -57,10 +97,11 @@ pub struct Vault {
     pub file_path: Option<PathBuf>,
     pub filesize: Option<u64>,
     pub store: Option<PasswordList>,
-    pub encryption_key: Option<Zeroizing<[u8; 32]>>,
+    pub encryption_key: Option<crate::locked_buf::LockedKey>,
     pub last_activity: Instant,
     pub lock_timeout_secs: u64,
     pub iterations: u32,
+    pub kdf_params: Option<VaultKdfParams>,
     pub keyfile: Option<PathBuf>,
     pub keyfile_hash: Option<[u8; 32]>,
     pub keyfile_bytes: Option<Zeroizing<Vec<u8>>>,
@@ -146,15 +187,20 @@ pub struct AppState {
     pub settings_timeout_mins: u32,
     pub edit_index: Option<usize>,
     pub delete_idx: Option<usize>,
+    pub trash_purge_pending: Option<usize>,
+    pub trash_empty_pending: bool,
     pub custom_error_message: Option<String>,
     pub custom_success_message: Option<String>,
     pub strength_cache: Option<(Zeroizing<String>, StrengthResult)>,
+    pub generated_password: Zeroizing<String>,
     pub hibp_cache: std::collections::HashMap<[u8; 32], bool>,
-    pub hibp_pending: Option<HibpPending>,
+    pub hibp_pending: Vec<HibpPending>,
     pub hibp_cancel: Option<Arc<AtomicBool>>,
     pub health_cache: Option<HealthSummary>,
     pub search_cache: Option<(String, Vec<usize>)>,
     pub should_exit: bool,
+    pub failed_unlocks: u32,
+    pub unlock_penalty_until: Option<Instant>,
 
     // settings
     pub light_mode: bool,
@@ -190,6 +236,8 @@ mod tests {
             expiration_date: None,
             cvc: None,
             favorite: None,
+            trashed_at: None,
+            password_history: Vec::new(),
         };
 
         let json = serde_json::to_string(&entry).unwrap();
@@ -208,6 +256,94 @@ mod tests {
         assert!(deserialized.number.is_none());
         assert!(deserialized.expiration_date.is_none());
         assert!(deserialized.cvc.is_none());
+        assert!(deserialized.trashed_at.is_none());
+        assert!(deserialized.password_history.is_empty());
+    }
+
+    #[test]
+    fn test_legacy_entry_json_without_new_fields_loads() {
+        let legacy_json = r#"{
+            "label": "legacy",
+            "username": "alice",
+            "password": "hunter2",
+            "notes": "",
+            "totp_secret": null,
+            "tags": null,
+            "url": "",
+            "custom_fields": [],
+            "is_secure_note": false,
+            "created_at": null,
+            "password_type": "Normal",
+            "number": null,
+            "expiration_date": null,
+            "cvc": null,
+            "favorite": null
+        }"#;
+
+        let entry: PasswordEntry = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(entry.label, "legacy");
+        assert!(entry.trashed_at.is_none());
+        assert!(entry.password_history.is_empty());
+    }
+
+    #[test]
+    fn test_is_trashed() {
+        let entry = PasswordEntry {
+            trashed_at: Some(1_000),
+            ..Default::default()
+        };
+        assert!(is_trashed(&entry));
+        assert!(!is_trashed(&PasswordEntry::default()));
+    }
+
+    #[test]
+    fn test_record_password_change_pushes_old_password() {
+        let mut entry = PasswordEntry {
+            password: Zeroizing::new("old".to_string()),
+            ..Default::default()
+        };
+
+        record_password_change(&mut entry, "new", 42);
+
+        assert_eq!(entry.password.as_str(), "old");
+        assert_eq!(entry.password_history.len(), 1);
+        assert_eq!(entry.password_history[0].password.as_str(), "old");
+        assert_eq!(entry.password_history[0].changed_at, 42);
+    }
+
+    #[test]
+    fn test_record_password_change_noop_when_unchanged() {
+        let mut entry = PasswordEntry {
+            password: Zeroizing::new("same".to_string()),
+            ..Default::default()
+        };
+
+        record_password_change(&mut entry, "same", 42);
+
+        assert!(entry.password_history.is_empty());
+    }
+
+    #[test]
+    fn test_record_password_change_caps_history() {
+        let mut entry = PasswordEntry {
+            password: Zeroizing::new("pw0".to_string()),
+            ..Default::default()
+        };
+
+        for i in 1..=(PASSWORD_HISTORY_CAP as u64 + 5) {
+            record_password_change(&mut entry, &format!("pw{i}"), i);
+            entry.password = Zeroizing::new(format!("pw{i}"));
+        }
+
+        assert_eq!(entry.password_history.len(), PASSWORD_HISTORY_CAP);
+        assert_eq!(entry.password_history[0].password.as_str(), "pw5");
+        assert_eq!(
+            entry
+                .password_history
+                .last()
+                .map(|history| history.password.as_str()),
+            Some("pw14")
+        );
     }
 
     #[test]

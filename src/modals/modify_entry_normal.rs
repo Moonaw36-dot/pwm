@@ -1,5 +1,6 @@
 use crate::app::{AppState, PasswordEntry};
 use crate::modals::render_strength_bar;
+use crate::models::{PasswordHistory, now_unix, record_password_change};
 use crate::theme;
 use zeroize::Zeroizing;
 
@@ -31,6 +32,7 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             state.modals.gen_password = true;
         }
         render_strength_bar(ui, strength);
+        render_password_history(ui, state);
     }
 
     ui.input_text("Notes", &mut state.form.notes).build();
@@ -63,6 +65,15 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         state.hibp_cache.remove(&crate::app::hash_password(
             store.entries[idx].password.as_str(),
         ));
+        if !state.form.is_secure_note {
+            record_password_change(
+                &mut store.entries[idx],
+                state.form.password.as_str(),
+                now_unix(),
+            );
+        }
+        let trashed_at = store.entries[idx].trashed_at;
+        let password_history = std::mem::take(&mut store.entries[idx].password_history);
         store.entries[idx] = PasswordEntry {
             label: state.form.label.clone(),
             username: state.form.username.clone(),
@@ -83,6 +94,8 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             ),
             is_secure_note: state.form.is_secure_note,
             created_at: store.entries[idx].created_at,
+            trashed_at,
+            password_history,
             totp_cache: None,
             password_type: store.entries[idx].password_type,
             number: store.entries[idx].number.clone(),
@@ -103,5 +116,41 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         state.edit_index = None;
         state.clear_inputs();
         ui.close_current_popup();
+    }
+}
+
+/// Stored password history for the edited entry, newest last.
+fn render_password_history(ui: &imgui::Ui, state: &mut AppState) {
+    let history: Vec<PasswordHistory> = state
+        .edit_index
+        .and_then(|idx| state.vault.store.as_ref()?.entries.get(idx))
+        .map(|entry| entry.password_history.clone())
+        .unwrap_or_default();
+
+    if history.is_empty() {
+        return;
+    }
+
+    if !ui.collapsing_header(
+        format!("Password history ({})", history.len()),
+        imgui::TreeNodeFlags::empty(),
+    ) {
+        return;
+    }
+
+    let mut copied = None;
+    for (i, item) in history.iter().enumerate().rev() {
+        ui.text(item.password.as_str());
+        ui.same_line();
+        if ui.button(format!("Copy##pw_history_{i}")) {
+            copied = Some(item.password.to_string());
+        }
+        ui.same_line();
+        if ui.button(format!("Restore##pw_history_{i}")) {
+            state.form.password = item.password.clone();
+        }
+    }
+    if let Some(password) = copied {
+        state.copy_to_clipboard(&password, "previous password");
     }
 }

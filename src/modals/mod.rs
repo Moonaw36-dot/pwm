@@ -28,7 +28,7 @@ pub use success::success_modal;
 pub use warning::warning_modal;
 
 use crate::app::{AppState, PasswordEntry};
-use crate::models::{EntryForm, PasswordType};
+use crate::models::{EntryForm, PasswordType, is_trashed};
 use crate::strength::{StrengthResult, get_card_issuer};
 use crate::theme;
 use zeroize::Zeroizing;
@@ -89,6 +89,8 @@ fn add_entry_from_inputs(state: &mut AppState) {
         .into(),
         cvc: std::mem::replace(&mut state.form.cvc, Zeroizing::new(String::new())).into(),
         favorite: None,
+        trashed_at: None,
+        password_history: Vec::new(),
         totp_code_cache: None,
     };
 
@@ -231,6 +233,9 @@ pub(crate) fn render_entries_list(
         let mut clicked_idx = None;
         let mut clicked_entry = None;
         for (i, entry) in store.entries.iter().enumerate() {
+            if is_trashed(entry) {
+                continue;
+            }
             if entry.password_type == PasswordType::Card {
                 let label = if entry.label.is_empty() {
                     "Card"

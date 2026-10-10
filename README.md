@@ -13,6 +13,7 @@ Vault contents stay in files you control. Aegis does not provide cloud sync; the
 - Optional keyfile support for an additional unlock factor
 - Fresh nonce on every save, with the vault salt preserved for unlocks
 - Atomic saves via temporary files and rename
+- Automatic timestamped backups to a user-chosen folder, keeping the last 10 (best-effort)
 - Private file permissions on Unix-like systems where supported
 - Sensitive in-memory fields use `zeroize` where practical
 - Configurable idle auto-lock, including the option to disable it
@@ -25,6 +26,8 @@ Vault contents stay in files you control. Aegis does not provide cloud sync; the
 - Payment card entries with masked card display, issuer hints, Luhn validation, expiry, and CVC fields
 - URL opening for `http://` and `https://` entry links
 - CSV import/export for backup and migration, including card, Wi-Fi, secure-note, TOTP, favorite, and custom-field data
+- Soft delete with a Trash tab: restore entries, purge individually or empty the trash (all behind confirmation)
+- Per-entry password history (last 10 changes) with copy and restore from the Modify dialog
 
 ### Password tooling
 
@@ -50,7 +53,7 @@ Vault contents stay in files you control. Aegis does not provide cloud sync; the
 On Debian/Ubuntu-like Linux systems, the desktop stack may require packages such as:
 
 ```bash
-sudo apt install libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxi-dev libxcursor-dev
+sudo apt install libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxi-dev libxcursor-dev libxext-dev libxfixes-dev libxrender-dev libxtst-dev
 ```
 
 On NixOS, use the included traditional `shell.nix` and launcher. The shell supplies
@@ -91,8 +94,17 @@ sed "s|^Exec=.*|Exec=$PWD/aegis|; s|^TryExec=.*|TryExec=$PWD/aegis|" \
 
 ```bash
 cargo build --release
-./target/release/aegis
 ```
+
+Then launch via the wrapper so the X11/Wayland/OpenGL libraries are present:
+
+```bash
+./aegis
+```
+
+On non-NixOS systems with the dependencies above installed system-wide,
+`./target/release/aegis` also works directly. Inside `nix-shell shell.nix`,
+`cargo run --release` works as well.
 
 For development checks:
 
@@ -118,6 +130,14 @@ The ignored tests include slower Argon2-related checks.
 After opening or creating a vault, use **Files → Add a key-file** to add an optional keyfile. The keyfile bytes are mixed into the derived encryption key, and a hash of the keyfile is stored in Aegis config for that vault.
 
 If a vault has a keyfile, future unlocks require both the master password and the keyfile. Keep a backup of the keyfile; losing it can make the vault unrecoverable.
+
+### Duress decoy vault
+
+Each vault can have its own duress password, configured in **Files → Settings** while that vault is open. Entering the duress password at that vault's unlock prompt opens a generated decoy vault instead of the real one. The real vault file is never modified or deleted.
+
+The decoy is stored next to the vault as `<name>.decoy.aegis`, is encrypted with the duress password, and comes pre-filled with plausible-looking entries so it passes casual inspection. It behaves like a normal vault and can be deleted at any time; it is regenerated on the next duress unlock if it is missing.
+
+Older configs kept a single global duress password. On first load it is migrated to the most recently used vault; if no vault was recorded, it is dropped and should be re-set in Settings.
 
 ### CSV import/export
 
@@ -148,15 +168,19 @@ Copied values are cleared from the clipboard after 10 seconds.
 
 ## Vault format
 
-An Aegis vault is a binary file with this layout:
+An Aegis vault is a versioned binary file. Saves always write format version 2, which starts with a magic header followed by the Argon2id parameters used to derive the key:
 
 ```text
-[16 bytes salt] [4 bytes little-endian Argon2id iterations] [12 bytes nonce] [AES-256-GCM ciphertext]
+[4 bytes magic "AEGS"] [1 byte format version = 2] [16 bytes salt]
+[4 bytes m_cost, little-endian] [4 bytes t_cost, little-endian] [4 bytes p_cost, little-endian]
+[12 bytes nonce] [AES-256-GCM ciphertext]
 ```
 
-The ciphertext decrypts to JSON containing the password entries. New vaults use Argon2id with 64 MiB of memory and a configurable iteration count. Older vaults created with legacy parameters can still be opened through a fallback path.
+Keys are derived with Argon2id (version 0x13, 32-byte output) using the parameters stored in the header, so opening a vault always performs exactly one key derivation. The ciphertext decrypts to JSON containing the password entries. Saving preserves the salt already stored in the vault file and generates a fresh nonce on every save.
 
-A fresh nonce is generated on every save. Saves are written to a temporary file and then renamed over the original vault to reduce the chance of partial writes.
+Vaults created by older versions of Aegis have no magic header and use one of two layouts: `[16 bytes salt] [12 bytes nonce] [ciphertext]`, or `[16 bytes salt] [4 bytes little-endian Argon2id iterations] [12 bytes nonce] [ciphertext]`. Legacy vaults remain readable and are upgraded to format version 2 the next time the vault is saved.
+
+Saves are written to a temporary file and then renamed over the original vault to reduce the chance of partial writes.
 
 ## Configuration
 
@@ -166,7 +190,7 @@ Aegis stores non-vault configuration under your system config directory, for exa
 ~/.config/aegis/config.json
 ```
 
-The config currently stores the auto-lock timeout and known keyfile hashes by vault path. It does not store your master password or vault contents.
+The config currently stores the auto-lock timeout, known keyfile hashes by vault path, and the backup folder (`backup_dir`) used for automatic vault backups. It does not store your master password or vault contents.
 
 ## Stack
 
@@ -190,8 +214,11 @@ The config currently stores the auto-lock timeout and known keyfile hashes by va
 - Aegis has not been formally security-audited.
 - There is no master-password recovery. If you forget the master password, the vault cannot be decrypted.
 - If you add a keyfile, losing the keyfile can make the vault unrecoverable.
-- There is no built-in sync, browser extension, or autofill integration.
+- There is no built-in sync or autofill integration.
+- While unlocked, the derived key is kept in page-locked memory (`mlock`/`VirtualLock`) so it is not swapped to disk. Locking is best-effort: if the OS refuses (for example a low `RLIMIT_MEMLOCK`), the key still stays in ordinary memory and is still wiped on lock.
+- After several failed unlock attempts, further attempts are delayed with an increasing backoff (up to one minute). This is an in-app speed bump: it resets when the app restarts and does not protect the vault file from offline attacks — Argon2id remains the real defense there.
 - CSV export is plaintext. Treat exported files as sensitive and delete or encrypt them after use.
+- Automatic backups are full encrypted vault copies; they unlock with the same master password (and keyfile, if used) as the original vault.
 - Clipboard-history exclusion is best-effort and platform-dependent.
 - Opening the Health tab may contact Have I Been Pwned using SHA-1 hash prefixes, not plaintext passwords.
 

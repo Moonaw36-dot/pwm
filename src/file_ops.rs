@@ -9,11 +9,22 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+const MAGIC: [u8; 4] = *b"AEGS";
+const FORMAT_VERSION: u8 = 2;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const ITER_LEN: usize = 4;
 const HEADER_LEN: usize = SALT_LEN + ITER_LEN + NONCE_LEN;
 const HEADER_LEN_LEGACY: usize = SALT_LEN + NONCE_LEN;
+const HEADER_LEN_V2: usize = MAGIC.len() + 1 + SALT_LEN + 12 + NONCE_LEN;
+const MAX_BACKUPS: usize = 10;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VaultKdfParams {
+    pub m_cost: u32,
+    pub t_cost: u32,
+    pub p_cost: u32,
+}
 
 fn set_private_permissions(path: &Path) -> Result<(), String> {
     #[cfg(not(unix))]
@@ -228,6 +239,8 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
             cvc: optional_record_value(&record, idx_cvc).map(Zeroizing::new),
             favorite,
             totp_code_cache: None,
+            trashed_at: None,
+            password_history: Vec::new(),
         });
     }
 
@@ -271,7 +284,11 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
         ])
         .map_err(|e| e.to_string())?;
 
-    for entry in &store.entries {
+    for entry in store
+        .entries
+        .iter()
+        .filter(|e| !crate::models::is_trashed(e))
+    {
         let tags = entry
             .tags
             .as_deref()
@@ -334,28 +351,22 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
     atomic_write_private_file(&path, &csv_data)
 }
 
-fn derive_key(
+pub(crate) fn derive_key_params(
     password: &str,
     salt: &[u8; 16],
+    params: VaultKdfParams,
     keyfile_bytes: Option<&[u8]>,
-    iterations: u32,
-) -> Result<Zeroizing<[u8; 32]>, String> {
-    derive_key_params(password, salt, 65536, iterations, keyfile_bytes)
-}
-
-fn derive_key_params(
-    password: &str,
-    salt: &[u8; 16],
-    m_cost: u32,
-    t_cost: u32,
-    keyfile_bytes: Option<&[u8]>,
-) -> Result<Zeroizing<[u8; 32]>, String> {
-    let mut key = Zeroizing::new([0u8; 32]);
-    let params = argon2::Params::new(m_cost, t_cost, 1, Some(32))
+) -> Result<crate::locked_buf::LockedKey, String> {
+    let mut key = crate::locked_buf::LockedKey::zeroed();
+    let argon_params = argon2::Params::new(params.m_cost, params.t_cost, params.p_cost, Some(32))
         .map_err(|e| format!("Argon2 params: {e}"))?;
-    Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
-        .hash_password_into(password.as_bytes(), salt, &mut *key)
-        .map_err(|e| format!("Key derivation failed: {e}"))?;
+    Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon_params,
+    )
+    .hash_password_into(password.as_bytes(), salt, &mut *key)
+    .map_err(|e| format!("Key derivation failed: {e}"))?;
 
     if let Some(kf) = keyfile_bytes {
         let mut combined = Zeroizing::new(Vec::with_capacity(32 + kf.len()));
@@ -367,11 +378,12 @@ fn derive_key_params(
 
     Ok(key)
 }
-fn encrypt_store(
+
+pub(crate) fn encrypt_store(
     store: &PasswordList,
     key: &[u8; 32],
-    salt: &[u8],
-    iterations: u32,
+    salt: &[u8; 16],
+    params: VaultKdfParams,
 ) -> Result<Vec<u8>, String> {
     let json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?);
     let cipher = Aes256Gcm::new(key.into());
@@ -380,9 +392,13 @@ fn encrypt_store(
         .encrypt(&nonce, json.as_bytes())
         .map_err(|e| e.to_string())?;
 
-    let mut out = Vec::with_capacity(HEADER_LEN + ciphertext.len());
+    let mut out = Vec::with_capacity(HEADER_LEN_V2 + ciphertext.len());
+    out.extend_from_slice(&MAGIC);
+    out.push(FORMAT_VERSION);
     out.extend_from_slice(salt);
-    out.extend_from_slice(&iterations.to_le_bytes());
+    out.extend_from_slice(&params.m_cost.to_le_bytes());
+    out.extend_from_slice(&params.t_cost.to_le_bytes());
+    out.extend_from_slice(&params.p_cost.to_le_bytes());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ciphertext);
     Ok(out)
@@ -427,8 +443,13 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     rand::rng().fill_bytes(&mut salt);
 
     let iterations = state.form.iterations_entry as u32;
-    let key = derive_key(&state.master_input, &salt, None, iterations)?;
-    let filedata = encrypt_store(&empty_store, &key, &salt, iterations)?;
+    let params = VaultKdfParams {
+        m_cost: 65536,
+        t_cost: iterations,
+        p_cost: 1,
+    };
+    let key = derive_key_params(&state.master_input, &salt, params, None)?;
+    let filedata = encrypt_store(&empty_store, &key, &salt, params)?;
     write_private_file_new(&path, &filedata)?;
 
     state.vault.store = Some(empty_store);
@@ -436,6 +457,7 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     state.vault.file_path = Some(path);
     state.vault.file_name = vault_name;
     state.vault.iterations = iterations;
+    state.vault.kdf_params = Some(params);
     state.invalidate_vault_caches();
     Ok(())
 }
@@ -518,14 +540,18 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
         combined.extend_from_slice(enc_arr);
         combined.extend_from_slice(&*key);
         let digest = Sha256::digest(&*combined);
-        let mut new_key = Zeroizing::new([0u8; 32]);
+        let mut new_key = crate::locked_buf::LockedKey::zeroed();
         new_key.copy_from_slice(&digest);
 
         if let Err(e) = save_store(
             &state.vault.file_path,
             &store,
             &new_key,
-            state.vault.iterations,
+            VaultKdfParams {
+                m_cost: 65536,
+                t_cost: state.vault.iterations,
+                p_cost: 1,
+            },
         ) {
             state.vault.encryption_key = Some(enc_key);
             state.vault.store = Some(store);
@@ -567,11 +593,10 @@ fn try_decrypt(
     salt: &[u8; 16],
     nonce: &[u8; 12],
     ciphertext: &[u8],
-    m_cost: u32,
-    t_cost: u32,
+    params: VaultKdfParams,
     keyfile_bytes: Option<&[u8]>,
-) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-    let key = derive_key_params(password, salt, m_cost, t_cost, keyfile_bytes).ok()?;
+) -> Option<(PasswordList, crate::locked_buf::LockedKey)> {
+    let key = derive_key_params(password, salt, params, keyfile_bytes).ok()?;
     let cipher = Aes256Gcm::new((&*key).into());
     let plaintext = Zeroizing::new(cipher.decrypt(nonce.into(), ciphertext).ok()?);
     let json = Zeroizing::new(String::from_utf8(plaintext.to_vec()).ok()?);
@@ -579,15 +604,82 @@ fn try_decrypt(
     Some((store, key))
 }
 
+fn load_store_v2(
+    data: &[u8],
+    password: &str,
+    keyfile_bytes: Option<&[u8]>,
+) -> Result<(PasswordList, crate::locked_buf::LockedKey, VaultKdfParams), String> {
+    if data.len() <= HEADER_LEN_V2 {
+        return Err("Vault file is truncated or corrupted".to_string());
+    }
+
+    let version = data[MAGIC.len()];
+    if version != FORMAT_VERSION {
+        return Err(format!(
+            "Vault version {version} is not supported by this version of Aegis"
+        ));
+    }
+
+    let mut offset = MAGIC.len() + 1;
+    let salt: [u8; 16] = data[offset..offset + SALT_LEN]
+        .try_into()
+        .map_err(|_| "Vault file is truncated or corrupted".to_string())?;
+    offset += SALT_LEN;
+    let m_cost = u32::from_le_bytes(
+        data[offset..offset + 4]
+            .try_into()
+            .map_err(|_| "Vault file is truncated or corrupted".to_string())?,
+    );
+    offset += 4;
+    let t_cost = u32::from_le_bytes(
+        data[offset..offset + 4]
+            .try_into()
+            .map_err(|_| "Vault file is truncated or corrupted".to_string())?,
+    );
+    offset += 4;
+    let p_cost = u32::from_le_bytes(
+        data[offset..offset + 4]
+            .try_into()
+            .map_err(|_| "Vault file is truncated or corrupted".to_string())?,
+    );
+    offset += 4;
+    let nonce: [u8; 12] = data[offset..HEADER_LEN_V2]
+        .try_into()
+        .map_err(|_| "Vault file is truncated or corrupted".to_string())?;
+
+    let params = VaultKdfParams {
+        m_cost,
+        t_cost,
+        p_cost,
+    };
+    let ciphertext = &data[HEADER_LEN_V2..];
+
+    let key = derive_key_params(password, &salt, params, keyfile_bytes)?;
+    let cipher = Aes256Gcm::new((&*key).into());
+    let plaintext = cipher
+        .decrypt((&nonce).into(), ciphertext)
+        .map_err(|_| "Decryption failed: wrong master password or corrupted file".to_string())?;
+    let json = String::from_utf8(plaintext)
+        .map_err(|_| "Decryption failed: wrong master password or corrupted file".to_string())?;
+    let store: PasswordList =
+        serde_json::from_str(&json).map_err(|e| format!("Corrupted vault contents: {e}"))?;
+
+    Ok((store, key, params))
+}
+
 pub fn load_store(
     path: &PathBuf,
     password: &str,
     keyfile_bytes: Option<&[u8]>,
-) -> Result<(PasswordList, Zeroizing<[u8; 32]>), String> {
+) -> Result<(PasswordList, crate::locked_buf::LockedKey, VaultKdfParams), String> {
     let data = std::fs::read(path).map_err(|e| format!("Failed to read vault: {e}"))?;
 
     if data.len() < SALT_LEN {
         return Err("File is too short to be a valid store".to_string());
+    }
+
+    if data.starts_with(&MAGIC) {
+        return load_store_v2(&data, password, keyfile_bytes);
     }
 
     let salt: [u8; 16] = data[..SALT_LEN]
@@ -600,16 +692,15 @@ pub fn load_store(
             .map_err(|_| "Invalid nonce".to_string())?;
         let ciphertext = &data[HEADER_LEN_LEGACY..];
         for (m_cost, t_cost) in [(19456u32, 2u32), (65536u32, 3u32)] {
-            if let Some(result) = try_decrypt(
-                password,
-                &salt,
-                &nonce,
-                ciphertext,
+            let params = VaultKdfParams {
                 m_cost,
                 t_cost,
-                keyfile_bytes,
-            ) {
-                return Ok(result);
+                p_cost: 1,
+            };
+            if let Some(result) =
+                try_decrypt(password, &salt, &nonce, ciphertext, params, keyfile_bytes)
+            {
+                return Ok((result.0, result.1, params));
             }
         }
     }
@@ -620,43 +711,142 @@ pub fn load_store(
             .map_err(|_| "Invalid nonce".to_string())?;
         let ciphertext = &data[HEADER_LEN..];
         let iterations = parse_iterations_from_header(&data);
-        if let Some(result) = try_decrypt(
-            password,
-            &salt,
-            &nonce,
-            ciphertext,
-            65536,
-            iterations,
-            keyfile_bytes,
-        )
-        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, keyfile_bytes))
-        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 19456, 2, keyfile_bytes))
-        .or_else(|| try_decrypt(password, &salt, &nonce, ciphertext, 65536, 2, keyfile_bytes))
-        {
-            return Ok(result);
+        for (m_cost, t_cost) in [
+            (65536u32, iterations),
+            (65536u32, 3u32),
+            (19456u32, 2u32),
+            (65536u32, 2u32),
+        ] {
+            let params = VaultKdfParams {
+                m_cost,
+                t_cost,
+                p_cost: 1,
+            };
+            if let Some(result) =
+                try_decrypt(password, &salt, &nonce, ciphertext, params, keyfile_bytes)
+            {
+                return Ok((result.0, result.1, params));
+            }
         }
     }
 
     Err("Decryption failed: wrong master password or corrupted file".to_string())
 }
 
+fn read_existing_salt(path: &Path) -> Result<[u8; SALT_LEN], String> {
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("Failed to read vault before save: {e}"))?;
+    let mut head = [0u8; MAGIC.len() + 1 + SALT_LEN];
+    let mut read_len = 0;
+    while read_len < head.len() {
+        match file.read(&mut head[read_len..]) {
+            Ok(0) => break,
+            Ok(n) => read_len += n,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    if head[..MAGIC.len()] == MAGIC {
+        if read_len < MAGIC.len() + 1 + SALT_LEN {
+            return Err("File is too short to be a valid store".to_string());
+        }
+        let mut salt = [0u8; SALT_LEN];
+        salt.copy_from_slice(&head[MAGIC.len() + 1..MAGIC.len() + 1 + SALT_LEN]);
+        Ok(salt)
+    } else if read_len >= SALT_LEN {
+        let mut salt = [0u8; SALT_LEN];
+        salt.copy_from_slice(&head[..SALT_LEN]);
+        Ok(salt)
+    } else {
+        Err("File is too short to be a valid store".to_string())
+    }
+}
+
 pub fn save_store(
     path: &Option<PathBuf>,
     store: &PasswordList,
     key: &[u8; 32],
-    iterations: u32,
+    params: VaultKdfParams,
 ) -> Result<(), String> {
     let Some(p) = path else { return Ok(()) };
 
-    let mut existing =
-        std::fs::File::open(p).map_err(|e| format!("Failed to read vault before save: {e}"))?;
-    let mut salt = [0u8; SALT_LEN];
-    existing
-        .read_exact(&mut salt)
-        .map_err(|_| "File is too short to be a valid store".to_string())?;
+    let salt = read_existing_salt(p)?;
+    let filedata = encrypt_store(store, key, &salt, params)?;
+    atomic_write_private_file(p, &filedata)?;
+    backup_vault(p);
+    Ok(())
+}
 
-    let filedata = encrypt_store(store, key, &salt, iterations)?;
-    atomic_write_private_file(p, &filedata)
+/// Best-effort timestamped copy of the freshly saved vault, pruned to
+/// `MAX_BACKUPS` per vault. Never fails the save.
+fn backup_vault(path: &Path) {
+    let backup_dir = crate::config::load().backup_dir;
+    let Some(dir) = backup_dir else {
+        return;
+    };
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        log::warn!("Backup directory {} unavailable: {error}", dir.display());
+        return;
+    }
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let backup_path = dir.join(format!("{stem}.backup.{unix_secs}.aegis"));
+    if let Err(error) = std::fs::copy(path, &backup_path) {
+        log::warn!(
+            "Failed to back up vault to {}: {error}",
+            backup_path.display()
+        );
+    }
+    prune_backups(&dir, stem);
+}
+
+/// Remove the oldest `{stem}.backup.*.aegis` copies beyond `MAX_BACKUPS`,
+/// ordering by the numeric timestamp in the name.
+fn prune_backups(dir: &Path, stem: &str) {
+    let prefix = format!("{stem}.backup.");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut stamps: Vec<u64> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            name.to_str()?
+                .strip_prefix(&prefix)?
+                .strip_suffix(".aegis")?
+                .parse::<u64>()
+                .ok()
+        })
+        .collect();
+    if stamps.len() <= MAX_BACKUPS {
+        return;
+    }
+    stamps.sort_unstable();
+    for stamp in &stamps[..stamps.len() - MAX_BACKUPS] {
+        let stale = dir.join(format!("{prefix}{stamp}.aegis"));
+        if let Err(error) = std::fs::remove_file(&stale) {
+            log::warn!("Failed to remove old backup {}: {error}", stale.display());
+        }
+    }
+}
+
+pub(crate) fn write_new_vault_file(
+    path: &Path,
+    store: &PasswordList,
+    password: &str,
+    params: VaultKdfParams,
+    keyfile_bytes: Option<&[u8]>,
+) -> Result<crate::locked_buf::LockedKey, String> {
+    let mut salt = [0u8; SALT_LEN];
+    rand::rng().fill_bytes(&mut salt);
+    let key = derive_key_params(password, &salt, params, keyfile_bytes)?;
+    let filedata = encrypt_store(store, &key, &salt, params)?;
+    write_private_file_new(path, &filedata)?;
+    Ok(key)
 }
 
 #[cfg(test)]
@@ -664,9 +854,15 @@ mod tests {
     use super::*;
     use crate::models::PasswordEntry;
 
-    #[test]
-    fn test_encrypt_decrypt_roundtrip() {
-        let store = PasswordList {
+    fn temp_vault_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aegis-file-ops-{tag}-{:016x}.aegis",
+            rand::rng().random::<u64>()
+        ))
+    }
+
+    fn sample_store() -> PasswordList {
+        PasswordList {
             entries: vec![
                 PasswordEntry {
                     label: "test".into(),
@@ -683,39 +879,54 @@ mod tests {
                     ..Default::default()
                 },
             ],
+        }
+    }
+
+    #[test]
+    fn test_v2_header_layout_and_roundtrip() {
+        let store = sample_store();
+        let password = "master_password";
+        let mut salt = [0u8; SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let params = VaultKdfParams {
+            m_cost: 2048,
+            t_cost: 2,
+            p_cost: 1,
         };
 
-        let password = "master_password";
-        let mut salt = [0u8; 16];
-        rand::rng().fill_bytes(&mut salt);
+        let key = derive_key_params(password, &salt, params, None).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt, params).unwrap();
 
-        let key = derive_key_params(password, &salt, 65536, 3, None).unwrap();
-        let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
+        assert_eq!(&encrypted[..4], &MAGIC);
+        assert_eq!(encrypted[4], FORMAT_VERSION);
+        assert_eq!(&encrypted[5..21], &salt);
+        assert_eq!(&encrypted[21..25], &params.m_cost.to_le_bytes());
+        assert_eq!(&encrypted[25..29], &params.t_cost.to_le_bytes());
+        assert_eq!(&encrypted[29..33], &params.p_cost.to_le_bytes());
+        let nonce: [u8; 12] = encrypted[33..HEADER_LEN_V2].try_into().unwrap();
+        assert!(encrypted.len() > HEADER_LEN_V2);
 
-        assert!(encrypted.len() > HEADER_LEN);
-        assert_eq!(&encrypted[..SALT_LEN], &salt);
+        let path = temp_vault_path("v2-roundtrip");
+        write_private_file_new(&path, &encrypted).unwrap();
+        let (loaded_store, loaded_key, loaded_params) = load_store(&path, password, None).unwrap();
+
+        assert_eq!(loaded_params, params);
+        assert_eq!(loaded_key, key);
+        assert_eq!(loaded_store.entries.len(), 2);
+        assert_eq!(loaded_store.entries[0].label, "test");
+        assert_eq!(loaded_store.entries[0].password.as_str(), "secret123");
         assert_eq!(
-            &encrypted[SALT_LEN..SALT_LEN + ITER_LEN],
-            &3u32.to_le_bytes()
-        );
-
-        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN]
-            .try_into()
-            .unwrap();
-        let ciphertext = &encrypted[HEADER_LEN..];
-
-        let (decrypted_store, _) =
-            try_decrypt(password, &salt, &nonce, ciphertext, 65536, 3, None).unwrap();
-
-        assert_eq!(decrypted_store.entries.len(), 2);
-        assert_eq!(decrypted_store.entries[0].label, "test");
-        assert_eq!(decrypted_store.entries[0].password.as_str(), "secret123");
-        assert_eq!(
-            decrypted_store.entries[0].totp_secret.as_deref(),
+            loaded_store.entries[0].totp_secret.as_deref(),
             Some("JBSWY3DPEHPK3PXP")
         );
-        assert_eq!(decrypted_store.entries[1].label, "empty");
-        assert!(decrypted_store.entries[1].password.is_empty());
+        assert_eq!(loaded_store.entries[1].label, "empty");
+        assert!(loaded_store.entries[1].password.is_empty());
+
+        let reread = std::fs::read(&path).unwrap();
+        assert_eq!(reread.len(), encrypted.len());
+        assert_eq!(&reread[..HEADER_LEN_V2], &encrypted[..HEADER_LEN_V2]);
+        assert_eq!(&reread[33..HEADER_LEN_V2], &nonce);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -723,20 +934,23 @@ mod tests {
         let store = PasswordList { entries: vec![] };
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
+        let params = VaultKdfParams {
+            m_cost: 2048,
+            t_cost: 2,
+            p_cost: 1,
+        };
 
-        let key = derive_key_params("correct", &salt, 65536, 3, None).unwrap();
-        let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
+        let key = derive_key_params("correct", &salt, params, None).unwrap();
+        let encrypted = encrypt_store(&store, &key, &salt, params).unwrap();
 
-        let nonce: [u8; 12] = encrypted[SALT_LEN + ITER_LEN..HEADER_LEN]
-            .try_into()
-            .unwrap();
-        let ciphertext = &encrypted[HEADER_LEN..];
+        let nonce: [u8; 12] = encrypted[33..HEADER_LEN_V2].try_into().unwrap();
+        let ciphertext = &encrypted[HEADER_LEN_V2..];
 
-        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, 65536, 3, None).is_none());
+        assert!(try_decrypt("wrong", &salt, &nonce, ciphertext, params, None).is_none());
     }
 
     #[test]
-    fn test_legacy_fallback() {
+    fn test_legacy_no_iterations_format_loads() {
         let store = PasswordList {
             entries: vec![PasswordEntry {
                 label: "legacy".into(),
@@ -747,7 +961,12 @@ mod tests {
 
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
-        let legacy_key = derive_key_params("mypass", &salt, 19456, 2, None).unwrap();
+        let legacy_params = VaultKdfParams {
+            m_cost: 19456,
+            t_cost: 2,
+            p_cost: 1,
+        };
+        let legacy_key = derive_key_params("mypass", &salt, legacy_params, None).unwrap();
         let json = serde_json::to_string_pretty(&store).unwrap();
         let cipher = Aes256Gcm::new((&*legacy_key).into());
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -757,17 +976,137 @@ mod tests {
         encrypted.extend_from_slice(&nonce);
         encrypted.extend_from_slice(&ciphertext);
 
-        let (decrypted, new_key) = load_store_for_test(&encrypted, "mypass").unwrap();
+        let path = temp_vault_path("legacy-noiter");
+        write_private_file_new(&path, &encrypted).unwrap();
+        let (decrypted, key, params) = load_store(&path, "mypass", None).unwrap();
         assert_eq!(decrypted.entries[0].label, "legacy");
-        assert_eq!(new_key, legacy_key);
+        assert_eq!(key, legacy_key);
+        assert_eq!(params, legacy_params);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_legacy_iterations_format_loads() {
+        let store = PasswordList {
+            entries: vec![PasswordEntry {
+                label: "legacy-iter".into(),
+                ..Default::default()
+            }],
+        };
+
+        let mut salt = [0u8; 16];
+        rand::rng().fill_bytes(&mut salt);
+        let legacy_params = VaultKdfParams {
+            m_cost: 65536,
+            t_cost: 3,
+            p_cost: 1,
+        };
+        let legacy_key = derive_key_params("mypass", &salt, legacy_params, None).unwrap();
+        let json = serde_json::to_string_pretty(&store).unwrap();
+        let cipher = Aes256Gcm::new((&*legacy_key).into());
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, json.as_bytes()).unwrap();
+        let mut encrypted = Vec::with_capacity(HEADER_LEN + ciphertext.len());
+        encrypted.extend_from_slice(&salt);
+        encrypted.extend_from_slice(&3u32.to_le_bytes());
+        encrypted.extend_from_slice(&nonce);
+        encrypted.extend_from_slice(&ciphertext);
+
+        let path = temp_vault_path("legacy-iter");
+        write_private_file_new(&path, &encrypted).unwrap();
+        let (decrypted, key, params) = load_store(&path, "mypass", None).unwrap();
+        assert_eq!(decrypted.entries[0].label, "legacy-iter");
+        assert_eq!(key, legacy_key);
+        assert_eq!(params, legacy_params);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_unknown_version_errors() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&MAGIC);
+        data.push(9);
+        data.extend_from_slice(&[0u8; 64]);
+
+        let path = temp_vault_path("unknown-version");
+        write_private_file_new(&path, &data).unwrap();
+        let error = load_store(&path, "pw", None).unwrap_err();
+        assert_eq!(
+            error,
+            "Vault version 9 is not supported by this version of Aegis"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_truncated_v2_header_errors() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&MAGIC);
+        data.push(FORMAT_VERSION);
+        data.extend_from_slice(&[0u8; 20]);
+
+        let path = temp_vault_path("truncated-v2");
+        write_private_file_new(&path, &data).unwrap();
+        let error = load_store(&path, "pw", None).unwrap_err();
+        assert_eq!(error, "Vault file is truncated or corrupted");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_v2_wrong_password_fails() {
+        let store = PasswordList { entries: vec![] };
+        let path = temp_vault_path("v2-wrong-pw");
+        write_new_vault_file(
+            &path,
+            &store,
+            "correct",
+            VaultKdfParams {
+                m_cost: 2048,
+                t_cost: 2,
+                p_cost: 1,
+            },
+            None,
+        )
+        .unwrap();
+
+        let error = load_store(&path, "wrong", None).unwrap_err();
+        assert_eq!(
+            error,
+            "Decryption failed: wrong master password or corrupted file"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_write_new_vault_file_roundtrip() {
+        let store = sample_store();
+        let path = temp_vault_path("write-new");
+        let params = VaultKdfParams {
+            m_cost: 2048,
+            t_cost: 2,
+            p_cost: 1,
+        };
+        let key = write_new_vault_file(&path, &store, "password", params, None).unwrap();
+
+        let (loaded, loaded_key, loaded_params) = load_store(&path, "password", None).unwrap();
+        assert_eq!(loaded_key, key);
+        assert_eq!(loaded_params, params);
+        assert_eq!(loaded.entries.len(), 2);
+        assert_eq!(loaded.entries[0].password.as_str(), "secret123");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn test_save_and_load_current_format() {
-        let path = std::env::temp_dir().join(format!(
-            "aegis-save-test-{:016x}.aegis",
-            rand::rng().random::<u64>()
-        ));
+        // This save writes a backup via `crate::config::load()`; serialize it
+        // against the Linux backup tests, which redirect the process-global
+        // XDG_CONFIG_HOME while they run.
+        #[cfg(target_os = "linux")]
+        let _config_env_guard = backup_tests::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let path = temp_vault_path("save-load");
         let store = PasswordList {
             entries: vec![PasswordEntry {
                 label: "saved".into(),
@@ -775,44 +1114,218 @@ mod tests {
                 ..Default::default()
             }],
         };
-        let mut salt = [0u8; SALT_LEN];
-        rand::rng().fill_bytes(&mut salt);
-        let key = derive_key_params("password", &salt, 65536, 3, None).unwrap();
-        let encrypted = encrypt_store(&store, &key, &salt, 3).unwrap();
-        write_private_file_new(&path, &encrypted).unwrap();
+        let params = VaultKdfParams {
+            m_cost: 2048,
+            t_cost: 2,
+            p_cost: 1,
+        };
+        let key = write_new_vault_file(&path, &store, "password", params, None).unwrap();
 
         let loaded = load_store(&path, "password", None).unwrap();
         assert_eq!(loaded.0.entries[0].label, "saved");
-        save_store(&Some(path.clone()), &store, &key, 3).unwrap();
+        assert_eq!(loaded.2, params);
+        save_store(&Some(path.clone()), &store, &key, params).unwrap();
         let reloaded = load_store(&path, "password", None).unwrap();
         assert_eq!(reloaded.0.entries[0].password.as_str(), "secret");
+        assert_eq!(reloaded.2, params);
         let _ = std::fs::remove_file(path);
     }
 
-    fn load_store_for_test(
-        data: &[u8],
-        password: &str,
-    ) -> Option<(PasswordList, Zeroizing<[u8; 32]>)> {
-        if data.len() > HEADER_LEN_LEGACY {
-            let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
-            let nonce: [u8; 12] = data[SALT_LEN..HEADER_LEN_LEGACY].try_into().ok()?;
-            let ct = &data[HEADER_LEN_LEGACY..];
-            if let Some(result) = try_decrypt(password, &salt, &nonce, ct, 19456, 2, None)
-                .or_else(|| try_decrypt(password, &salt, &nonce, ct, 65536, 3, None))
-            {
-                return Some(result);
+    // Backup tests redirect `crate::config::load()` at a temporary config
+    // directory via XDG_CONFIG_HOME, which only `dirs` on Linux honors.
+    #[cfg(target_os = "linux")]
+    mod backup_tests {
+        use super::*;
+        use crate::config::Config;
+        use std::ffi::OsString;
+        use std::sync::{Mutex, MutexGuard};
+
+        pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+        struct TestConfig {
+            previous: Option<OsString>,
+            config_dir: PathBuf,
+            _lock: MutexGuard<'static, ()>,
+        }
+
+        impl TestConfig {
+            fn new(tag: &str, config: &Config) -> Self {
+                let lock = ENV_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let config_dir = unique_dir(&format!("config-{tag}"));
+                std::fs::create_dir_all(config_dir.join("aegis")).unwrap();
+                std::fs::write(
+                    config_dir.join("aegis").join("config.json"),
+                    serde_json::to_string(config).unwrap(),
+                )
+                .unwrap();
+                let previous = std::env::var_os("XDG_CONFIG_HOME");
+                unsafe { std::env::set_var("XDG_CONFIG_HOME", &config_dir) };
+                Self {
+                    previous,
+                    config_dir,
+                    _lock: lock,
+                }
             }
         }
-        if data.len() > HEADER_LEN {
-            let salt: [u8; 16] = data[..SALT_LEN].try_into().ok()?;
-            let nonce: [u8; 12] = data[SALT_LEN + ITER_LEN..HEADER_LEN].try_into().ok()?;
-            let ct = &data[HEADER_LEN..];
-            let iterations = parse_iterations_from_header(data);
-            try_decrypt(password, &salt, &nonce, ct, 65536, iterations, None)
-                .or_else(|| try_decrypt(password, &salt, &nonce, ct, 65536, 3, None))
-                .or_else(|| try_decrypt(password, &salt, &nonce, ct, 65536, 2, None))
-        } else {
-            None
+
+        impl Drop for TestConfig {
+            fn drop(&mut self) {
+                match &self.previous {
+                    Some(value) => unsafe { std::env::set_var("XDG_CONFIG_HOME", value) },
+                    None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+                }
+                let _ = std::fs::remove_dir_all(&self.config_dir);
+            }
+        }
+
+        /// `legacy_duress` is private, so build the config through serde.
+        fn config_with_backup_dir(backup_dir: &Path) -> Config {
+            serde_json::from_str(&format!(
+                r#"{{"lock_timeout_secs": 300, "backup_dir": {}}}"#,
+                serde_json::to_string(&backup_dir).unwrap()
+            ))
+            .unwrap()
+        }
+
+        fn unique_dir(tag: &str) -> PathBuf {
+            let dir = std::env::temp_dir().join(format!(
+                "aegis-backup-{tag}-{:016x}",
+                rand::rng().random::<u64>()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        fn saved_vault(
+            tag: &str,
+        ) -> (
+            PathBuf,
+            PasswordList,
+            crate::locked_buf::LockedKey,
+            VaultKdfParams,
+        ) {
+            let vault = temp_vault_path(tag);
+            let store = sample_store();
+            let params = VaultKdfParams {
+                m_cost: 2048,
+                t_cost: 2,
+                p_cost: 1,
+            };
+            let key = write_new_vault_file(&vault, &store, "password", params, None).unwrap();
+            (vault, store, key, params)
+        }
+
+        fn backup_stamps(backup_dir: &Path, stem: &str) -> Vec<u64> {
+            let prefix = format!("{stem}.backup.");
+            let mut stamps: Vec<u64> = std::fs::read_dir(backup_dir)
+                .unwrap()
+                .map(|entry| {
+                    entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .strip_prefix(&prefix)
+                        .unwrap()
+                        .strip_suffix(".aegis")
+                        .unwrap()
+                        .parse()
+                        .unwrap()
+                })
+                .collect();
+            stamps.sort_unstable();
+            stamps
+        }
+
+        fn unix_now() -> u64 {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        }
+
+        #[test]
+        fn test_save_store_writes_timestamped_backup() {
+            let backup_dir = unique_dir("naming");
+            let _config_env = TestConfig::new("naming", &config_with_backup_dir(&backup_dir));
+
+            let (vault, store, key, params) = saved_vault("save-backup");
+            save_store(&Some(vault.clone()), &store, &key, params).unwrap();
+
+            let stem = vault.file_stem().unwrap().to_str().unwrap();
+            let names: Vec<String> = std::fs::read_dir(&backup_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(names.len(), 1);
+            let stamp = names[0]
+                .strip_prefix(&format!("{stem}.backup."))
+                .and_then(|rest| rest.strip_suffix(".aegis"))
+                .unwrap_or_else(|| panic!("unexpected backup name {}", names[0]));
+            stamp.parse::<u64>().expect("backup stamp is unix seconds");
+            assert_eq!(
+                std::fs::read(backup_dir.join(&names[0])).unwrap(),
+                std::fs::read(&vault).unwrap()
+            );
+
+            let _ = std::fs::remove_file(vault);
+            let _ = std::fs::remove_dir_all(backup_dir);
+        }
+
+        #[test]
+        fn test_save_store_keeps_only_newest_backups() {
+            let backup_dir = unique_dir("prune");
+            let _config_env = TestConfig::new("prune", &config_with_backup_dir(&backup_dir));
+
+            let (vault, store, key, params) = saved_vault("prune-backup");
+            let stem = vault.file_stem().unwrap().to_str().unwrap();
+            let prefix = format!("{stem}.backup.");
+            let now = unix_now();
+
+            // Saves within the same second share one backup name, so seed
+            // older stamps to make pruning observable without sleeping.
+            for age in 1..=(MAX_BACKUPS as u64 + 2) {
+                std::fs::write(
+                    backup_dir.join(format!("{prefix}{}.aegis", now - age)),
+                    b"stale",
+                )
+                .unwrap();
+            }
+
+            for _ in 0..(MAX_BACKUPS + 3) {
+                save_store(&Some(vault.clone()), &store, &key, params).unwrap();
+            }
+
+            let stamps = backup_stamps(&backup_dir, stem);
+            assert_eq!(stamps.len(), MAX_BACKUPS);
+            let oldest_kept = now - (MAX_BACKUPS as u64 - 1);
+            assert!(stamps.iter().all(|stamp| *stamp >= oldest_kept));
+            for age in MAX_BACKUPS as u64..=(MAX_BACKUPS as u64 + 2) {
+                assert!(
+                    !backup_dir
+                        .join(format!("{prefix}{}.aegis", now - age))
+                        .exists()
+                );
+            }
+
+            let _ = std::fs::remove_file(vault);
+            let _ = std::fs::remove_dir_all(backup_dir);
+        }
+
+        #[test]
+        fn test_save_store_without_backup_dir_creates_no_backups() {
+            let backup_dir = std::env::temp_dir().join(format!(
+                "aegis-backup-disabled-{:016x}",
+                rand::rng().random::<u64>()
+            ));
+            let _config_env = TestConfig::new("disabled", &Config::default());
+
+            let (vault, store, key, params) = saved_vault("no-backup");
+            save_store(&Some(vault.clone()), &store, &key, params).unwrap();
+
+            assert!(!backup_dir.exists());
+            let _ = std::fs::remove_file(vault);
         }
     }
 }

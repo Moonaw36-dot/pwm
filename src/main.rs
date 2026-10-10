@@ -5,6 +5,7 @@ mod clipboard;
 mod config;
 mod file_ops;
 mod input;
+mod locked_buf;
 mod modals;
 mod models;
 mod strength;
@@ -53,10 +54,47 @@ impl imgui::ClipboardBackend for ArboardClipboard {
     }
 }
 
+fn report_startup_error(context: &str, err: impl std::fmt::Debug) {
+    let detail = format!("{err:?}");
+    log::error!("{context}: {detail}");
+    eprintln!("Aegis failed to start ({context}): {detail}");
+    if detail.contains("NoWaylandLib")
+        || detail.contains("WaylandError")
+        || detail.contains("libwayland")
+        || detail.contains("NoXLib")
+        || detail.contains("XOpenDisplay")
+    {
+        eprintln!(
+            "Missing windowing libraries. On NixOS do not run target/release/aegis directly;\n\
+             use the launcher so the required X11/Wayland/OpenGL libraries are present:\n\n  \
+             cargo build --release\n  \
+             ./aegis\n\n\
+             If you are already inside `nix-shell shell.nix`, `cargo run --release` also works.\n\
+             On Debian/Ubuntu-like systems install:\n\n  \
+             sudo apt install libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev libwayland-dev \\\n  \
+             libx11-dev libxcb1-dev libxrandr-dev libxi-dev libxcursor-dev libxext-dev libxfixes-dev libxrender-dev"
+        );
+    } else if detail.contains("no available pixel format")
+        || detail.contains("NotFound")
+        || detail.contains("BadPixelFormat")
+    {
+        eprintln!(
+            "No suitable OpenGL configuration found. A working X11 or Wayland session and\n\
+             OpenGL-capable graphics drivers are required."
+        );
+    }
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = match EventLoop::new() {
+        Ok(event_loop) => event_loop,
+        Err(err) => {
+            report_startup_error("could not initialize windowing backend", &err);
+            std::process::exit(1);
+        }
+    };
     let window_builder =
         WindowBuilder::new()
             .with_title("Aegis")
@@ -66,34 +104,68 @@ fn main() {
             ));
 
     let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
-    let (window, gl_config) = display_builder
-        .build(&event_loop, ConfigTemplateBuilder::new(), |mut configs| {
-            configs.next().unwrap()
-        })
-        .unwrap();
-    let window = window.unwrap();
+    let (window, gl_config) =
+        match display_builder.build(&event_loop, ConfigTemplateBuilder::new(), |mut configs| {
+            configs.next().unwrap_or_else(|| {
+                report_startup_error(
+                    "no suitable OpenGL configuration",
+                    "no available pixel format",
+                );
+                std::process::exit(1);
+            })
+        }) {
+            Ok((window, gl_config)) => (window, gl_config),
+            Err(err) => {
+                report_startup_error("could not create OpenGL display", &err);
+                std::process::exit(1);
+            }
+        };
+    let window = window.unwrap_or_else(|| {
+        report_startup_error("could not create window", "window builder returned None");
+        std::process::exit(1);
+    });
 
     let gl_display = gl_config.display();
     let context_attribs = ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
     let gl_context = unsafe {
-        gl_display
-            .create_context(&gl_config, &context_attribs)
-            .unwrap()
+        match gl_display.create_context(&gl_config, &context_attribs) {
+            Ok(context) => context,
+            Err(err) => {
+                report_startup_error("could not create OpenGL context", &err);
+                std::process::exit(1);
+            }
+        }
     };
 
     let size = window.inner_size();
     let surface_attribs = SurfaceAttributesBuilder::<WindowSurface>::new().build(
         window.raw_window_handle(),
-        NonZeroU32::new(size.width.max(1)).unwrap(),
-        NonZeroU32::new(size.height.max(1)).unwrap(),
+        NonZeroU32::new(size.width.max(1)).unwrap_or_else(|| {
+            report_startup_error("invalid window size", "window width/height is zero");
+            std::process::exit(1);
+        }),
+        NonZeroU32::new(size.height.max(1)).unwrap_or_else(|| {
+            report_startup_error("invalid window size", "window width/height is zero");
+            std::process::exit(1);
+        }),
     );
     let gl_surface = unsafe {
-        gl_display
-            .create_window_surface(&gl_config, &surface_attribs)
-            .unwrap()
+        match gl_display.create_window_surface(&gl_config, &surface_attribs) {
+            Ok(surface) => surface,
+            Err(err) => {
+                report_startup_error("could not create OpenGL window surface", &err);
+                std::process::exit(1);
+            }
+        }
     };
 
-    let gl_context = gl_context.make_current(&gl_surface).unwrap();
+    let gl_context = match gl_context.make_current(&gl_surface) {
+        Ok(context) => context,
+        Err(err) => {
+            report_startup_error("could not activate OpenGL context", &err);
+            std::process::exit(1);
+        }
+    };
 
     let gl = unsafe {
         glow::Context::from_loader_function(|s| {
@@ -132,7 +204,13 @@ fn main() {
     }]);
     imgui_ctx.io_mut().font_global_scale = (1.0 / hidpi) as f32;
 
-    let mut renderer = imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_ctx).unwrap();
+    let mut renderer = match imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_ctx) {
+        Ok(renderer) => renderer,
+        Err(err) => {
+            report_startup_error("could not initialize OpenGL renderer", &err);
+            std::process::exit(1);
+        }
+    };
 
     let gl_rc = renderer.gl_context().clone();
     let card_texture = texture::load_from_bytes(

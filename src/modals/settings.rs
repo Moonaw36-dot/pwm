@@ -1,6 +1,8 @@
 use crate::app::AppState;
+use crate::config::{Config, Duress};
 use crate::theme;
-use zeroize::Zeroizing;
+use std::path::PathBuf;
+use zeroize::Zeroize;
 
 pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_SETTINGS, 0.0]);
@@ -29,10 +31,20 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.checkbox("Light mode", &mut state.settings_light_mode);
 
-    ui.input_text("Self destruct password", &mut state.self_destruct_pass)
-        .password(true)
-        .build();
-    ui.text_disabled("Stored as a salted hash. Leave empty to disable.");
+    ui.separator();
+
+    ui.text("Duress password (this vault)");
+    match state.vault.file_path.clone() {
+        Some(path) => duress_controls(ui, state, path),
+        None => ui.text_disabled("Open a vault to configure its duress password."),
+    }
+
+    ui.separator();
+
+    ui.text("Backups");
+    backup_controls(ui, state);
+
+    ui.separator();
 
     ui.checkbox("Hide Email", &mut state.hide_user);
     ui.text_disabled("This will censor your username / email in the \"View passwords\" tab.");
@@ -47,8 +59,6 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
         let mut config = crate::config::load();
         config.light_mode = state.light_mode;
         config.lock_timeout_secs = state.vault.lock_timeout_secs;
-        config.duress.set(&state.self_destruct_pass);
-        state.self_destruct_pass = Zeroizing::new(String::new());
         config.hide_user = state.hide_user;
         config.invert_copy_controls = state.invert_copy_controls;
 
@@ -62,5 +72,73 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.same_line();
     if ui.button("Cancel##settings") {
         ui.close_current_popup();
+    }
+}
+
+fn duress_controls(ui: &imgui::Ui, state: &mut AppState, path: PathBuf) {
+    let enabled = crate::config::load().duress_by_vault.contains_key(&path);
+    ui.text_disabled(if enabled {
+        "Duress is enabled for this vault."
+    } else {
+        "Duress is disabled for this vault."
+    });
+
+    ui.input_text("Password", &mut state.self_destruct_pass)
+        .password(true)
+        .build();
+    if state.self_destruct_pass.is_empty() {
+        ui.text_disabled("Enter a password to set, or remove the existing one.");
+    }
+
+    if ui.button("Set duress password") && !state.self_destruct_pass.is_empty() {
+        let mut config = crate::config::load();
+        config
+            .duress_by_vault
+            .insert(path.clone(), Duress::new(state.self_destruct_pass.as_str()));
+        finish_duress_change(ui, state, config, "Duress password set for this vault.");
+        return;
+    }
+
+    if enabled && ui.button("Remove duress password") {
+        let mut config = crate::config::load();
+        config.duress_by_vault.remove(&path);
+        finish_duress_change(ui, state, config, "Duress password removed for this vault.");
+    }
+}
+
+fn finish_duress_change(ui: &imgui::Ui, state: &mut AppState, config: Config, message: &str) {
+    if let Err(e) = crate::config::save(&config) {
+        state.custom_error_message = Some(e);
+    } else {
+        state.custom_success_message = Some(message.to_string());
+        state.modals.show_success = true;
+    }
+    state.self_destruct_pass.zeroize();
+    ui.close_current_popup();
+}
+
+fn backup_controls(ui: &imgui::Ui, state: &mut AppState) {
+    let backup_dir = crate::config::load().backup_dir;
+    match &backup_dir {
+        Some(dir) => ui.text_disabled(format!("Backups are saved to {}.", dir.display())),
+        None => ui.text_disabled("Backups are disabled."),
+    }
+
+    if ui.button("Choose backup folder")
+        && let Some(path) = rfd::FileDialog::new().pick_folder()
+    {
+        let mut config = crate::config::load();
+        config.backup_dir = Some(path);
+        if let Err(e) = crate::config::save(&config) {
+            state.custom_error_message = Some(e);
+        }
+    }
+
+    if backup_dir.is_some() && ui.button("Disable backups") {
+        let mut config = crate::config::load();
+        config.backup_dir = None;
+        if let Err(e) = crate::config::save(&config) {
+            state.custom_error_message = Some(e);
+        }
     }
 }

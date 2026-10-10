@@ -11,6 +11,10 @@ let
     libxi
     libxrandr
     libxcb
+    libXext
+    libXfixes
+    libXrender
+    libXtst
   ];
 in
 pkgs.mkShell {

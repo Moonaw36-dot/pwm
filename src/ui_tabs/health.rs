@@ -1,18 +1,13 @@
-use crate::models::{AppState, HealthSummary, PasswordList, PasswordType};
+use crate::models::{AppState, HealthSummary, PasswordList, PasswordType, is_trashed};
 use crate::strength::{haveibeenpwned, manual_strength};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::TryRecvError;
 use zeroize::Zeroizing;
 
+const MAX_HIBP_IN_FLIGHT: usize = 4;
+
 pub fn mask_password(s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= 4 {
-        return "*".repeat(chars.len());
-    }
-    let prefix: String = chars[..2].iter().collect();
-    let suffix: String = chars[chars.len() - 2..].iter().collect();
-    let stars = "*".repeat(chars.len().saturating_sub(4));
-    format!("{prefix}{stars}{suffix}")
+    "*".repeat(s.chars().count().min(32))
 }
 
 fn build_health_summary(store: &PasswordList) -> HealthSummary {
@@ -27,7 +22,7 @@ fn build_health_summary(store: &PasswordList) -> HealthSummary {
     const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
 
     for entry in &store.entries {
-        if entry.is_secure_note {
+        if is_trashed(entry) || entry.is_secure_note {
             continue;
         }
         if entry.password_type == PasswordType::Normal || entry.password_type == PasswordType::WiFi
@@ -105,23 +100,21 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
             ui.separator();
         }
 
-        if let Some((pw_hash, receiver, label)) = state.hibp_pending.take() {
+        let pending = std::mem::take(&mut state.hibp_pending);
+        for (pw_hash, receiver, label) in pending {
             match receiver.try_recv() {
                 Ok(Ok(result)) => {
-                    state.hibp_cancel = None;
                     state.hibp_cache.insert(pw_hash, result);
                 }
                 Ok(Err(e)) => {
-                    state.hibp_cancel = None;
                     state.custom_error_message =
                         Some(format!("Failed to check HIBP for {label}: {e}"));
                     log::error!("HIBP error for {label}: {e}");
                 }
                 Err(TryRecvError::Empty) => {
-                    state.hibp_pending = Some((pw_hash, receiver, label));
+                    state.hibp_pending.push((pw_hash, receiver, label));
                 }
                 Err(TryRecvError::Disconnected) => {
-                    state.hibp_cancel = None;
                     state.custom_error_message = Some(format!(
                         "Failed to check HIBP for {label}: background worker stopped"
                     ));
@@ -129,47 +122,62 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
                 }
             }
         }
+        if state.hibp_pending.is_empty() {
+            state.hibp_cancel = None;
+        }
 
         let mut pwned_indices: Vec<usize> = Vec::new();
-        let mut checked_any = false;
+        let mut pending_hashes: std::collections::HashSet<[u8; 32]> = state
+            .hibp_pending
+            .iter()
+            .map(|(hash, _, _)| *hash)
+            .collect();
         for (i, entry) in store.entries.iter().enumerate() {
             if entry.password_type != PasswordType::Normal {
                 continue;
             }
 
-            if entry.is_secure_note {
+            if is_trashed(entry) || entry.is_secure_note {
                 continue;
             }
 
             let password: &str = &entry.password;
             let pw_hash = crate::app::hash_password(password);
-            if !checked_any
-                && state.hibp_pending.is_none()
+            if state.hibp_pending.len() < MAX_HIBP_IN_FLIGHT
                 && !state.hibp_cache.contains_key(&pw_hash)
+                && !pending_hashes.contains(&pw_hash)
             {
-                checked_any = true;
                 let password = Zeroizing::new(entry.password.to_string());
                 let label = entry.label.clone();
                 let label_for_worker = label.clone();
-                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let worker_cancel = cancel.clone();
+                let cancel = state
+                    .hibp_cancel
+                    .get_or_insert_with(|| {
+                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+                    })
+                    .clone();
                 let (sender, receiver) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
                     let result = haveibeenpwned(password.as_str());
-                    if !worker_cancel.load(Ordering::Acquire) && sender.send(result).is_err() {
+                    if !cancel.load(Ordering::Acquire) && sender.send(result).is_err() {
                         log::error!("HIBP result receiver dropped for {label_for_worker}");
                     }
                 });
-                state.hibp_pending = Some((pw_hash, receiver, label));
-                state.hibp_cancel = Some(cancel);
+                pending_hashes.insert(pw_hash);
+                state.hibp_pending.push((pw_hash, receiver, label));
             }
             if state.hibp_cache.get(&pw_hash) == Some(&true) {
                 pwned_indices.push(i);
             }
         }
 
-        if let Some((_, _, label)) = &state.hibp_pending {
-            ui.text(format!("Checking HIBP for {label}..."));
+        if let Some((_, _, label)) = state.hibp_pending.first() {
+            let extra = state.hibp_pending.len() - 1;
+            if extra > 0 {
+                ui.text(format!("Checking HIBP for {label} (+{extra} more)..."));
+            } else {
+                ui.text(format!("Checking HIBP for {label}..."));
+            }
             ui.separator();
         }
 
@@ -216,7 +224,7 @@ mod tests {
 
     #[test]
     fn mask_password_handles_unicode_boundaries() {
-        assert_eq!(mask_password("pässwörd"), "pä****rd");
+        assert_eq!(mask_password("pässwörd"), "********");
         assert_eq!(mask_password("秘密"), "**");
     }
 }

@@ -41,12 +41,12 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.separator();
 
-    if !state.form.password.is_empty() {
+    if !state.generated_password.is_empty() {
         ui.text_disabled(format!(
             "Generated password: {}",
-            "*".repeat(state.form.password.len())
+            "*".repeat(state.generated_password.len())
         ));
-        let pw = state.form.password.clone();
+        let pw = state.generated_password.clone();
         let strength = state.cached_strength(&pw);
         render_strength_bar(ui, strength);
     }
@@ -54,7 +54,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     if ui.button("Generate##gen") {
-        state.form.password = Zeroizing::new(if state.generator.mode == GenMode::Passphrase {
+        state.generated_password = Zeroizing::new(if state.generator.mode == GenMode::Passphrase {
             generate_passphrase(
                 state.generator.word_count as usize,
                 &state.generator.separator,
@@ -74,24 +74,26 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     if state.modals.gen_from_add {
         ui.same_line();
         if ui.button("Use this##gen") {
+            state.form.password = state.generated_password.clone();
+            state.generated_password = Zeroizing::new(String::new());
             state.modals.gen_from_add = false;
-            ui.close_current_popup();
         }
 
         ui.same_line();
         if ui.button("Cancel##gen") {
-            state.form.password = Zeroizing::new(String::new());
+            state.generated_password = Zeroizing::new(String::new());
             state.modals.gen_from_add = false;
             ui.close_current_popup();
         }
     } else {
         if ui.button("Copy to clipboard###gen") {
-            let password = state.form.password.clone();
+            let password = state.generated_password.clone();
             state.copy_to_clipboard(&password, "generated password");
             ui.close_current_popup();
         }
 
         if ui.button("Close") {
+            state.generated_password = Zeroizing::new(String::new());
             ui.close_current_popup();
         }
     }

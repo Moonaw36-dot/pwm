@@ -89,24 +89,6 @@ fn looks_like_passphrase(words: &[&str]) -> bool {
             .all(|word| word.chars().all(|c| c.is_ascii_lowercase()))
 }
 
-fn password_pool_size(password: &str) -> f64 {
-    let mut pool = 0.0f64;
-    if password.chars().any(|c| c.is_ascii_lowercase()) {
-        pool += 26.0;
-    }
-    if password.chars().any(|c| c.is_ascii_uppercase()) {
-        pool += 26.0;
-    }
-    if password.chars().any(|c| c.is_ascii_digit()) {
-        pool += 10.0;
-    }
-    if password.chars().any(|c| !c.is_ascii_alphanumeric()) {
-        pool += 32.0;
-    }
-
-    if pool == 0.0 { 26.0 } else { pool }
-}
-
 pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
     let words = password_words(password);
     if looks_like_passphrase(&words) {
@@ -184,12 +166,12 @@ pub fn generate_passphrase(word_count: usize, separator: &str) -> String {
         .join(separator)
 }
 
-pub fn bits_to_strength(bits: f64) -> StrengthResult {
-    match bits as u32 {
-        0..=29 => (0, "Very Weak", [0.85, 0.15, 0.15, 1.0]),
-        30..=49 => (1, "Weak", [0.90, 0.50, 0.10, 1.0]),
-        50..=65 => (2, "Fair", [0.85, 0.75, 0.10, 1.0]),
-        66..=94 => (3, "Strong", [0.35, 0.75, 0.20, 1.0]),
+fn score_to_strength(score: u8) -> StrengthResult {
+    match score {
+        0 => (0, "Very Weak", [0.85, 0.15, 0.15, 1.0]),
+        1 => (1, "Weak", [0.90, 0.50, 0.10, 1.0]),
+        2 => (2, "Fair", [0.85, 0.75, 0.10, 1.0]),
+        3 => (3, "Strong", [0.35, 0.75, 0.20, 1.0]),
         _ => (4, "Very Strong", [0.10, 0.70, 0.20, 1.0]),
     }
 }
@@ -199,13 +181,25 @@ pub fn manual_strength(password: &str) -> StrengthResult {
         return (0, "—", [0.45, 0.45, 0.45, 1.0]);
     }
 
-    let words = password_words(password);
-    if looks_like_passphrase(&words) {
-        let wordlist_size = WORDLIST.lines().filter(|l| !l.is_empty()).count() as f64;
-        return bits_to_strength(words.len() as f64 * wordlist_size.log2());
+    score_to_strength(u8::from(zxcvbn::zxcvbn(password, &[]).score()))
+}
+
+pub fn master_password_issue(password: &str) -> Option<&'static str> {
+    let score = u8::from(zxcvbn::zxcvbn(password, &[]).score());
+    let length = password.chars().count();
+
+    if (length >= 12 && score >= 3) || (length >= 15 && score >= 2) {
+        return None;
     }
 
-    bits_to_strength(password.len() as f64 * password_pool_size(password).log2())
+    let words = password_words(password);
+    if looks_like_passphrase(&words) && words.len() >= MIN_PASSPHRASE_WORDS && score >= 2 {
+        return None;
+    }
+
+    Some(
+        "Master password is too weak: use at least 12 unpredictable characters, 15+ mixed characters, or a 4+ word passphrase.",
+    )
 }
 
 #[cfg(test)]
@@ -271,38 +265,6 @@ mod tests {
         assert!(!issues.contains(&PasswordSafety::TooFewWords));
     }
 
-    // ---- bits_to_strength ----
-
-    #[test]
-    fn test_bits_very_weak() {
-        assert_eq!(bits_to_strength(0.0).0, 0);
-        assert_eq!(bits_to_strength(29.9).0, 0);
-    }
-
-    #[test]
-    fn test_bits_weak() {
-        assert_eq!(bits_to_strength(30.0).0, 1);
-        assert_eq!(bits_to_strength(49.9).0, 1);
-    }
-
-    #[test]
-    fn test_bits_fair() {
-        assert_eq!(bits_to_strength(50.0).0, 2);
-        assert_eq!(bits_to_strength(65.9).0, 2);
-    }
-
-    #[test]
-    fn test_bits_strong() {
-        assert_eq!(bits_to_strength(66.0).0, 3);
-        assert_eq!(bits_to_strength(94.9).0, 3);
-    }
-
-    #[test]
-    fn test_bits_very_strong() {
-        assert_eq!(bits_to_strength(95.0).0, 4);
-        assert_eq!(bits_to_strength(200.0).0, 4);
-    }
-
     // ---- manual_strength ----
 
     #[test]
@@ -313,23 +275,62 @@ mod tests {
     }
 
     #[test]
+    fn test_manual_strength_common_password_is_weak() {
+        let (score, label, _) = manual_strength("password");
+        assert!(score <= 1);
+        assert_eq!(label, if score == 0 { "Very Weak" } else { "Weak" });
+    }
+
+    #[test]
+    fn test_manual_strength_l33t_password_is_weak() {
+        let (score, _, _) = manual_strength("P@ssw0rd123");
+        assert!(score <= 1, "P@ssw0rd123 scored {score}");
+    }
+
+    #[test]
+    fn test_manual_strength_random_password_is_strong() {
+        let (score, _, _) = manual_strength("qW7#mZx2$vLp9&nR4!kDf8");
+        assert!(score >= 3, "random password scored {score}");
+    }
+
+    #[test]
     fn test_manual_strength_passphrase() {
         let (score, _, _) = manual_strength("correct horse battery staple");
-        // ~52 bits → "Fair" (score 2)
-        assert_eq!(score, 2);
+        assert!(score >= 2, "passphrase scored {score}");
     }
 
     #[test]
     fn test_manual_strength_strong_passphrase() {
         let (score, _, _) = manual_strength("correct horse battery staple gun pack");
-        // ~77 bits → "Strong" (score 3)
-        assert_eq!(score, 3);
+        assert!(score >= 3, "long passphrase scored {score}");
     }
 
     #[test]
     fn test_manual_strength_short_password() {
         let (score, _, _) = manual_strength("aB1!");
         assert!(score < 3);
+    }
+
+    // ---- master_password_issue ----
+
+    #[test]
+    fn test_master_password_accepts_passphrase() {
+        assert_eq!(master_password_issue("correct horse battery staple"), None);
+    }
+
+    #[test]
+    fn test_master_password_accepts_long_random() {
+        assert_eq!(master_password_issue("qW7#mZx2$vLp9&nR4!kDf8"), None);
+    }
+
+    #[test]
+    fn test_master_password_rejects_weak_password() {
+        assert!(master_password_issue("password123").is_some());
+    }
+
+    #[test]
+    fn test_master_password_rejects_short_password() {
+        assert!(master_password_issue("short1!").is_some());
     }
 
     // ---- generate_password ----
