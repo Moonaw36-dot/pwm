@@ -7,6 +7,12 @@ use zeroize::Zeroizing;
 pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_GENERATOR, 0.0]);
 
+    // A fresh open starts from an empty slate; the value only persists while
+    // the popup stays open.
+    if ui.is_window_appearing() {
+        state.generated_password = Zeroizing::new(String::new());
+    }
+
     let mut mode_idx = if state.generator.mode == GenMode::Passphrase {
         1i32
     } else {
@@ -44,7 +50,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     if !state.generated_password.is_empty() {
         ui.text_disabled(format!(
             "Generated password: {}",
-            "*".repeat(state.generated_password.len())
+            crate::ui_tabs::health::mask_password(&state.generated_password)
         ));
         let pw = state.generated_password.clone();
         let strength = state.cached_strength(&pw);
@@ -54,7 +60,7 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.separator();
 
     if ui.button("Generate##gen") {
-        state.generated_password = Zeroizing::new(if state.generator.mode == GenMode::Passphrase {
+        let generated = if state.generator.mode == GenMode::Passphrase {
             generate_passphrase(
                 state.generator.word_count as usize,
                 &state.generator.separator,
@@ -68,21 +74,27 @@ pub fn generate_password_modal(ui: &imgui::Ui, state: &mut AppState) {
                 state.generator.special,
                 state.generator.ambiguous,
             )
-        });
+        };
+        if generated.is_empty() {
+            state.custom_error_message =
+                Some("Select at least one character set first.".to_string());
+        }
+        state.generated_password = Zeroizing::new(generated);
     }
 
-    if state.modals.gen_from_add {
+    if state.modals.gen_into_form {
         ui.same_line();
-        if ui.button("Use this##gen") {
+        if ui.button("Use this##gen") && !state.generated_password.is_empty() {
             state.form.password = state.generated_password.clone();
             state.generated_password = Zeroizing::new(String::new());
-            state.modals.gen_from_add = false;
+            state.modals.gen_into_form = false;
+            ui.close_current_popup();
         }
 
         ui.same_line();
         if ui.button("Cancel##gen") {
             state.generated_password = Zeroizing::new(String::new());
-            state.modals.gen_from_add = false;
+            state.modals.gen_into_form = false;
             ui.close_current_popup();
         }
     } else {

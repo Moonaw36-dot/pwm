@@ -9,11 +9,11 @@ pub fn new_file_title_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.slider("Iterations", 1, 20, &mut state.form.iterations_entry);
 
     if ui.button("OK") {
-        state.filename_input = if state.filename_input.is_empty() {
+        let name = state.filename_input.trim().to_string();
+        if name.is_empty() {
             return;
-        } else {
-            state.filename_input.trim().to_string()
-        };
+        }
+        state.filename_input = name;
 
         state.modals.master_is_create = true;
         state.modals.master = true;

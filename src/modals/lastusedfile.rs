@@ -10,10 +10,8 @@ pub fn use_lastused_file(ui: &imgui::Ui, state: &mut AppState) {
         state.vault.file_name = config
             .last_used_file
             .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "vault.aegis".to_string());
         state.vault.keyfile_hash = config
             .keyfile_hashes
             .get(config.last_used_file.as_path())

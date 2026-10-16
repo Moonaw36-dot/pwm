@@ -26,7 +26,10 @@ use glutin_winit::DisplayBuilder;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use raw_window_handle::HasRawWindowHandle;
 use std::num::NonZeroU32;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64},
+};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::{
     event::{Event, WindowEvent},
@@ -42,6 +45,7 @@ use ui::build_ui;
 struct ArboardClipboard {
     clipboard: arboard::Clipboard,
     external_copy_pending: Arc<AtomicBool>,
+    external_copy_fingerprint: Arc<AtomicU64>,
 }
 
 impl imgui::ClipboardBackend for ArboardClipboard {
@@ -49,8 +53,11 @@ impl imgui::ClipboardBackend for ArboardClipboard {
         self.clipboard.get_text().ok()
     }
     fn set(&mut self, value: &str) {
-        crate::clipboard::set_excluded_from_history(&mut self.clipboard, value);
-        self.external_copy_pending.store(true, Ordering::Release);
+        if crate::clipboard::set_excluded_from_history(&mut self.clipboard, value).is_ok() {
+            self.external_copy_fingerprint
+                .store(crate::clipboard::fingerprint(value), Ordering::Release);
+            self.external_copy_pending.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -184,6 +191,7 @@ fn main() {
         imgui_ctx.set_clipboard_backend(ArboardClipboard {
             clipboard,
             external_copy_pending: state.clipboard.backend_signal(),
+            external_copy_fingerprint: state.clipboard.backend_fingerprint_signal(),
         });
     }
 
@@ -220,6 +228,7 @@ fn main() {
     );
 
     let mut last_frame = std::time::Instant::now();
+    let mut next_tick = std::time::Instant::now() + std::time::Duration::from_secs(1);
     state.card_texture = card_texture;
     theme::apply(imgui_ctx.style_mut(), state.light_mode);
     let mut applied_light_mode = state.light_mode;
@@ -272,25 +281,15 @@ fn main() {
                 event,
                 Event::WindowEvent {
                     event: WindowEvent::KeyboardInput { .. }
+                        | WindowEvent::Ime { .. }
                         | WindowEvent::MouseInput { .. }
                         | WindowEvent::CursorMoved { .. }
-                        | WindowEvent::MouseWheel { .. },
+                        | WindowEvent::MouseWheel { .. }
+                        | WindowEvent::Resized { .. },
                     ..
                 }
             ) {
                 state.vault.last_activity = std::time::Instant::now();
-            }
-
-            if matches!(
-                &event,
-                Event::WindowEvent {
-                    event: WindowEvent::KeyboardInput { .. }
-                        | WindowEvent::MouseInput { .. }
-                        | WindowEvent::CursorMoved { .. }
-                        | WindowEvent::MouseWheel { .. },
-                    ..
-                }
-            ) {
                 window.request_redraw();
             }
 
@@ -319,10 +318,17 @@ fn main() {
                     last_frame = std::time::Instant::now();
                 }
                 Event::AboutToWait => {
+                    // Redraws are driven by input events, plus this one-second
+                    // tick that keeps timers running while idle (TOTP
+                    // countdown, auto-lock, clipboard auto-clear). Requesting
+                    // unconditionally would redraw at full speed forever.
                     target.set_control_flow(ControlFlow::WaitUntil(
                         std::time::Instant::now() + std::time::Duration::from_secs(1),
                     ));
-                    window.request_redraw();
+                    if std::time::Instant::now() >= next_tick {
+                        next_tick = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                        window.request_redraw();
+                    }
                 }
                 Event::WindowEvent {
                     event: WindowEvent::RedrawRequested,

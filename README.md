@@ -10,7 +10,7 @@ Vault contents stay in files you control. Aegis does not provide cloud sync; the
 
 - Local `.aegis` vault files encrypted with **AES-256-GCM**
 - **Argon2id** master-password key derivation for new vaults
-- Optional keyfile support for an additional unlock factor
+- Optional keyfile support for an additional unlock factor, combined into the vault key with HKDF-SHA256 (older vaults that used the previous combiner keep opening)
 - Fresh nonce on every save, with the vault salt preserved for unlocks
 - Atomic saves via temporary files and rename
 - Automatic timestamped backups to a user-chosen folder, keeping the last 10 (best-effort)
@@ -146,7 +146,7 @@ CSV export writes plaintext passwords after a confirmation dialog. Treat exporte
 The CSV format uses these columns:
 
 ```csv
-label,username,password,url,notes,tags,totp_secret,type,number,expiration_date,cvc,secure_note,custom_fields,favorite
+label,username,password,url,notes,tags,totp_secret,type,number,expiration_date,cvc,secure_note,custom_fields,favorite,created_at,trashed_at,password_history
 ```
 
 Tags are exported as a semicolon-separated value and custom fields as a JSON array. CSV import accepts common header aliases such as `name`, `title`, `login`, `email`, `website`, `site`, `note`, `comment`, `tag`, `totp`, and `otp`. CSV files contain plaintext secrets and should be deleted or encrypted after use.
@@ -176,7 +176,7 @@ An Aegis vault is a versioned binary file. Saves always write format version 2, 
 [12 bytes nonce] [AES-256-GCM ciphertext]
 ```
 
-Keys are derived with Argon2id (version 0x13, 32-byte output) using the parameters stored in the header, so opening a vault always performs exactly one key derivation. The ciphertext decrypts to JSON containing the password entries. Saving preserves the salt already stored in the vault file and generates a fresh nonce on every save.
+Keys are derived with Argon2id (version 0x13, 32-byte output) using the parameters stored in the header, so opening a vault always performs exactly one key derivation. The full header is authenticated as AES-GCM associated data, so tampering with the stored parameters invalidates the vault. The ciphertext decrypts to JSON containing the password entries. Saving preserves the salt already stored in the vault file and generates a fresh nonce on every save.
 
 Vaults created by older versions of Aegis have no magic header and use one of two layouts: `[16 bytes salt] [12 bytes nonce] [ciphertext]`, or `[16 bytes salt] [4 bytes little-endian Argon2id iterations] [12 bytes nonce] [ciphertext]`. Legacy vaults remain readable and are upgraded to format version 2 the next time the vault is saved.
 
@@ -216,7 +216,7 @@ The config currently stores the auto-lock timeout, known keyfile hashes by vault
 - If you add a keyfile, losing the keyfile can make the vault unrecoverable.
 - There is no built-in sync or autofill integration.
 - While unlocked, the derived key is kept in page-locked memory (`mlock`/`VirtualLock`) so it is not swapped to disk. Locking is best-effort: if the OS refuses (for example a low `RLIMIT_MEMLOCK`), the key still stays in ordinary memory and is still wiped on lock.
-- After several failed unlock attempts, further attempts are delayed with an increasing backoff (up to one minute). This is an in-app speed bump: it resets when the app restarts and does not protect the vault file from offline attacks — Argon2id remains the real defense there.
+- After several failed unlock attempts, further attempts are delayed with an increasing backoff (up to 64 seconds). This is an in-app speed bump: it resets when the app restarts and does not protect the vault file from offline attacks — Argon2id remains the real defense there.
 - CSV export is plaintext. Treat exported files as sensitive and delete or encrypt them after use.
 - Automatic backups are full encrypted vault copies; they unlock with the same master password (and keyfile, if used) as the original vault.
 - Clipboard-history exclusion is best-effort and platform-dependent.

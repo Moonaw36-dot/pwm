@@ -1,35 +1,55 @@
-/// Set clipboard text while requesting exclusion from clipboard history on all platforms.
+/// Clipboard helpers that keep copied secrets out of clipboard history where
+/// the platform allows it.
 ///
-/// - Linux: uses arboard's `SetExtLinux::exclude_from_history()`
-/// - Windows: writes CF_UNICODETEXT + ExcludeClipboardContentFromMonitorProcessing in one
-///   clipboard transaction, which prevents Windows 10+ clipboard history from capturing it
-/// - macOS: no public API exists; falls back to a plain set (value still auto-clears after 10s)
+/// - Linux: arboard's `SetExtLinux::exclude_from_history()` (effective on
+///   Wayland; X11 clipboard managers may still capture the value)
+/// - Windows: CF_UNICODETEXT + ExcludeClipboardContentFromMonitorProcessing
+///   in one clipboard transaction, so Windows 10+ history skips it
+/// - macOS: no public API exists; plain set (value still auto-clears after 10s)
 ///
-/// Writes the clipboard but does not arm the 10s auto-clear — copy secrets via
-/// `AppState::copy_to_clipboard` so they don't outlive the timer.
-pub(crate) fn set_excluded_from_history(clipboard: &mut arboard::Clipboard, text: &str) {
+/// These write the clipboard only — they do not arm the 10s auto-clear. Copy
+/// secrets via `AppState::copy_to_clipboard` so they don't outlive the timer.
+pub(crate) fn set_excluded_from_history(
+    clipboard: &mut arboard::Clipboard,
+    text: &str,
+) -> Result<(), ()> {
     #[cfg(target_os = "linux")]
     {
         use arboard::SetExtLinux;
-        clipboard.set().exclude_from_history().text(text).ok();
+        clipboard
+            .set()
+            .exclude_from_history()
+            .text(text)
+            .map_err(|_| ())
     }
 
     #[cfg(target_os = "windows")]
     {
         if windows_set_clipboard_excluded(text).is_err() {
-            clipboard.set_text(text).ok();
+            clipboard.set_text(text).map_err(|_| ())
+        } else {
+            Ok(())
         }
     }
 
     #[cfg(target_os = "macos")]
     {
-        clipboard.set_text(text).ok();
+        clipboard.set_text(text).map_err(|_| ())
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
-        clipboard.set_text(text).ok();
+        clipboard.set_text(text).map_err(|_| ())
     }
+}
+
+/// Short hash identifying a clipboard value, so the auto-clear only wipes
+/// data we put there ourselves.
+pub(crate) fn fingerprint(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(target_os = "windows")]

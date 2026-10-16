@@ -144,19 +144,19 @@ pub fn render_trash_tab(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     if purge_idx.is_some() || empty_trash {
-        let mut purged_passwords = Vec::new();
+        let mut purged_hashes = Vec::new();
         if let Some(store) = state.vault.store.as_mut() {
             if let Some(index) = purge_idx
                 && let Some(entry) = store.entries.get(index)
                 && is_trashed(entry)
             {
-                purged_passwords.push(entry.password.clone());
+                purged_hashes.push(hash_password(entry.password.as_str()));
                 store.entries.remove(index);
             }
             if empty_trash {
                 store.entries.retain(|entry| {
                     if is_trashed(entry) {
-                        purged_passwords.push(entry.password.clone());
+                        purged_hashes.push(hash_password(entry.password.as_str()));
                         false
                     } else {
                         true
@@ -164,8 +164,8 @@ pub fn render_trash_tab(ui: &imgui::Ui, state: &mut AppState) {
                 });
             }
         }
-        for password in purged_passwords {
-            state.hibp_cache.remove(&hash_password(password.as_str()));
+        for hash in purged_hashes {
+            state.hibp_cache.remove(&hash);
         }
         state.trash_purge_pending = None;
         state.trash_empty_pending = false;

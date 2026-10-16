@@ -1,6 +1,6 @@
 use crate::app::{AppState, PasswordEntry};
 use crate::modals::render_strength_bar;
-use crate::models::{PasswordHistory, now_unix, record_password_change};
+use crate::models::{now_unix, record_password_change};
 use crate::theme;
 use zeroize::Zeroizing;
 
@@ -15,11 +15,6 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     ui.input_text("Tag", &mut state.form.tag).build();
     ui.input_text("URL / Website", &mut state.form.url).build();
 
-    if state.form.is_secure_note {
-        state.form.username.clear();
-        state.form.password = Zeroizing::new(String::new());
-    }
-
     if !state.form.is_secure_note {
         ui.input_text("Username", &mut state.form.username).build();
         ui.input_text("Password", &mut state.form.password)
@@ -30,6 +25,7 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         let strength = state.cached_strength(&pw);
         if ui.button("Generate password") {
             state.modals.gen_password = true;
+            state.modals.gen_into_form = true;
         }
         render_strength_bar(ui, strength);
         render_password_history(ui, state);
@@ -55,9 +51,11 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             state.custom_error_message = Some(error.to_string());
             return;
         }
-        if !state.form.is_secure_note
-            && !crate::strength::verify_password(&state.form.password).is_empty()
-        {
+        // Only require a strong password when the password itself changes;
+        // otherwise a weak stored password would block every other edit.
+        let password_changed = !state.form.is_secure_note
+            && state.form.password.as_str() != store.entries[idx].password.as_str();
+        if password_changed && !crate::strength::verify_password(&state.form.password).is_empty() {
             state.custom_error_message =
                 Some("Choose a stronger password before saving this entry.".to_string());
             return;
@@ -65,19 +63,33 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         state.hibp_cache.remove(&crate::app::hash_password(
             store.entries[idx].password.as_str(),
         ));
-        if !state.form.is_secure_note {
-            record_password_change(
-                &mut store.entries[idx],
-                state.form.password.as_str(),
-                now_unix(),
-            );
+        // Archiving to history happens on every password change, including
+        // converting an entry into a secure note, so nothing is lost silently.
+        // An empty stored password has nothing worth archiving.
+        if !store.entries[idx].password.is_empty() {
+            let replacement = if state.form.is_secure_note {
+                ""
+            } else {
+                state.form.password.as_str()
+            };
+            record_password_change(&mut store.entries[idx], replacement, now_unix());
         }
         let trashed_at = store.entries[idx].trashed_at;
         let password_history = std::mem::take(&mut store.entries[idx].password_history);
+        let created_at = store.entries[idx].created_at;
+        let password_type = store.entries[idx].password_type;
         store.entries[idx] = PasswordEntry {
             label: state.form.label.clone(),
-            username: state.form.username.clone(),
-            password: state.form.password.clone(),
+            username: if state.form.is_secure_note {
+                String::new()
+            } else {
+                state.form.username.clone()
+            },
+            password: if state.form.is_secure_note {
+                Zeroizing::new(String::new())
+            } else {
+                state.form.password.clone()
+            },
             notes: state.form.notes.clone(),
             url: state.form.url.clone(),
             totp_secret: crate::modals::modify_entry::sanitize_totp(std::mem::replace(
@@ -93,11 +105,11 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
                     .collect::<Vec<_>>(),
             ),
             is_secure_note: state.form.is_secure_note,
-            created_at: store.entries[idx].created_at,
+            created_at,
             trashed_at,
             password_history,
             totp_cache: None,
-            password_type: store.entries[idx].password_type,
+            password_type,
             number: store.entries[idx].number.clone(),
             expiration_date: store.entries[idx].expiration_date.clone(),
             cvc: store.entries[idx].cvc.clone(),
@@ -119,28 +131,31 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
-/// Stored password history for the edited entry, newest last.
+/// Stored password history for the edited entry, newest last. Shown masked;
+/// the per-item Copy button reveals it via the clipboard only.
 fn render_password_history(ui: &imgui::Ui, state: &mut AppState) {
-    let history: Vec<PasswordHistory> = state
+    let Some(entry) = state
         .edit_index
         .and_then(|idx| state.vault.store.as_ref()?.entries.get(idx))
-        .map(|entry| entry.password_history.clone())
-        .unwrap_or_default();
-
-    if history.is_empty() {
+    else {
+        return;
+    };
+    if entry.password_history.is_empty() {
         return;
     }
 
     if !ui.collapsing_header(
-        format!("Password history ({})", history.len()),
+        format!("Password history ({})", entry.password_history.len()),
         imgui::TreeNodeFlags::empty(),
     ) {
         return;
     }
 
     let mut copied = None;
-    for (i, item) in history.iter().enumerate().rev() {
-        ui.text(item.password.as_str());
+    for (i, item) in entry.password_history.iter().enumerate().rev() {
+        ui.text(crate::ui_tabs::health::mask_password(
+            item.password.as_str(),
+        ));
         ui.same_line();
         if ui.button(format!("Copy##pw_history_{i}")) {
             copied = Some(item.password.to_string());

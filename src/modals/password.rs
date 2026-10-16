@@ -10,10 +10,15 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
             &mut state.form.password_type,
             PasswordType::Normal,
         );
-        ui.radio_button("##", &mut state.form.password_type, PasswordType::Card);
-        ui.same_line();
-        if let Some(card_tex) = state.card_texture {
-            imgui::Image::new(card_tex, [24.0, 24.0]).build(ui);
+        match state.card_texture {
+            Some(card_tex) => {
+                ui.radio_button("##", &mut state.form.password_type, PasswordType::Card);
+                ui.same_line();
+                imgui::Image::new(card_tex, [24.0, 24.0]).build(ui);
+            }
+            None => {
+                ui.radio_button("Card", &mut state.form.password_type, PasswordType::Card);
+            }
         }
 
         ui.radio_button("Wi-Fi", &mut state.form.password_type, PasswordType::WiFi);

@@ -1,18 +1,27 @@
-//! Page-locked key storage: secrets that must never touch swap and are
-//! zeroed on drop even if `mlock` is unavailable.
+//! Key storage that the OS is asked to keep out of swap and core dumps,
+//! zeroed on drop. When page-locking is unavailable the key degrades to
+//! ordinary heap memory; only a total allocation failure aborts.
 
 const KEY_LEN: usize = 32;
 
+use zeroize::Zeroize;
+
+enum Backing {
+    /// Private anonymous mapping kept out of swap (`mlock` on Unix,
+    /// `VirtualLock` on Windows) and core dumps (`MADV_DONTDUMP`).
+    Mapped { ptr: *mut u8, len: usize },
+    /// Fallback for when the mapping itself cannot be created.
+    Heap(Box<[u8; KEY_LEN]>),
+}
+
 /// A 32-byte key held in its own page-locked allocation.
 ///
-/// Unlike `Zeroizing`, the memory is a private anonymous mapping that the OS
-/// is asked to keep out of swap (`mlock` on Unix, `VirtualLock` on Windows)
-/// and to exclude from core dumps (`MADV_DONTDUMP` where available). Locking
-/// is best-effort: if the OS refuses (e.g. a low `RLIMIT_MEMLOCK`), the buffer
-/// still lives in ordinary anonymous memory and is still zeroed on drop.
+/// Unlike `Zeroizing`, the memory is a private anonymous mapping the OS is
+/// asked to keep out of swap and core dumps. Locking is best-effort: if the
+/// OS refuses (e.g. a low `RLIMIT_MEMLOCK`), the buffer still lives in
+/// ordinary anonymous memory and is still zeroed on drop.
 pub struct LockedKey {
-    ptr: *mut u8,
-    mapped: usize,
+    backing: Backing,
 }
 
 // The buffer is plain bytes owned exclusively by this value; sending or
@@ -26,13 +35,17 @@ impl LockedKey {
     }
 
     pub fn from_array(key: [u8; KEY_LEN]) -> LockedKey {
-        let mapped = page_size();
-        let ptr = alloc(mapped);
-        let result = LockedKey { ptr, mapped };
-        unsafe {
-            std::ptr::copy_nonoverlapping(key.as_ptr(), result.ptr, KEY_LEN);
-        }
+        let backing = match page_size() {
+            Some((ptr, len)) => Backing::Mapped { ptr, len },
+            None => Backing::Heap(Box::new([0u8; KEY_LEN])),
+        };
+        let mut result = LockedKey { backing };
+        result.copy_from_slice(&key);
         result
+    }
+
+    pub fn copy_from_slice(&mut self, key: &[u8; KEY_LEN]) {
+        self[..].copy_from_slice(key);
     }
 }
 
@@ -40,13 +53,19 @@ impl std::ops::Deref for LockedKey {
     type Target = [u8; KEY_LEN];
 
     fn deref(&self) -> &[u8; KEY_LEN] {
-        unsafe { &*self.ptr.cast::<[u8; KEY_LEN]>() }
+        match &self.backing {
+            Backing::Mapped { ptr, .. } => unsafe { &*ptr.cast::<[u8; KEY_LEN]>() },
+            Backing::Heap(boxed) => boxed.as_ref(),
+        }
     }
 }
 
 impl std::ops::DerefMut for LockedKey {
     fn deref_mut(&mut self) -> &mut [u8; KEY_LEN] {
-        unsafe { &mut *self.ptr.cast::<[u8; KEY_LEN]>() }
+        match &mut self.backing {
+            Backing::Mapped { ptr, .. } => unsafe { &mut *ptr.cast::<[u8; KEY_LEN]>() },
+            Backing::Heap(boxed) => boxed.as_mut(),
+        }
     }
 }
 
@@ -76,27 +95,23 @@ impl std::fmt::Debug for LockedKey {
 
 impl Drop for LockedKey {
     fn drop(&mut self) {
-        unsafe {
-            std::ptr::write_bytes(self.ptr, 0, self.mapped);
-            unlock(self.ptr, self.mapped);
-            free(self.ptr, self.mapped);
+        match &mut self.backing {
+            Backing::Mapped { ptr, len } => unsafe {
+                std::ptr::write_bytes(*ptr, 0, *len);
+                unlock(*ptr, *len);
+                free(*ptr, *len);
+            },
+            Backing::Heap(boxed) => boxed.as_mut().zeroize(),
         }
     }
 }
 
 #[cfg(unix)]
-fn page_size() -> usize {
-    unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(1) as usize }
-}
-
-#[cfg(windows)]
-fn page_size() -> usize {
-    4096
-}
-
-#[cfg(unix)]
-fn alloc(len: usize) -> *mut u8 {
+fn page_size() -> Option<(*mut u8, usize)> {
     unsafe {
+        let len = libc::sysconf(libc::_SC_PAGESIZE)
+            .max(KEY_LEN as libc::c_long)
+            .max(1) as usize;
         let ptr = libc::mmap(
             std::ptr::null_mut(),
             len,
@@ -107,7 +122,7 @@ fn alloc(len: usize) -> *mut u8 {
         );
         if ptr == libc::MAP_FAILED {
             log::warn!("LockedKey: mmap failed; key will use ordinary memory");
-            panic!("LockedKey: mmap failed");
+            return None;
         }
         if libc::mlock(ptr, len) != 0 {
             log::warn!("LockedKey: mlock failed; the key may be swappable");
@@ -118,25 +133,26 @@ fn alloc(len: usize) -> *mut u8 {
                 log::debug!("LockedKey: MADV_DONTDUMP unavailable");
             }
         }
-        ptr.cast()
+        Some((ptr.cast(), len))
     }
 }
 
 #[cfg(windows)]
-fn alloc(len: usize) -> *mut u8 {
+fn page_size() -> Option<(*mut u8, usize)> {
     use windows_sys::Win32::System::Memory::{
         MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualLock,
     };
     unsafe {
+        let len = 4096;
         let ptr = VirtualAlloc(None, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         if ptr.is_null() {
             log::warn!("LockedKey: VirtualAlloc failed; key will use ordinary memory");
-            panic!("LockedKey: VirtualAlloc failed");
+            return None;
         }
         if VirtualLock(ptr, len) == 0 {
             log::warn!("LockedKey: VirtualLock failed; the key may be swappable");
         }
-        ptr
+        Some((ptr, len))
     }
 }
 

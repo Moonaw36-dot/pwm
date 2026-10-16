@@ -69,10 +69,41 @@ pub fn render_health_tab(ui: &imgui::Ui, state: &mut AppState) {
         return;
     }
 
+    // zxcvbn over every entry is slow, so build the summary off the UI
+    // thread; results are discarded when the vault changed in the meantime.
     if state.health_cache.is_none()
-        && let Some(store) = &state.vault.store
+        && state.health_worker.is_none()
+        && let Some(store) = state.vault.store.clone()
     {
-        state.health_cache = Some(build_health_summary(store));
+        let generation = state.health_generation;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        state.health_worker = Some(receiver);
+        std::thread::spawn(move || {
+            let summary = build_health_summary(&store);
+            if sender.send((generation, summary)).is_err() {
+                log::debug!("Health summary receiver dropped; discarding result");
+            }
+        });
+    }
+
+    if let Some(receiver) = &state.health_worker {
+        match receiver.try_recv() {
+            Ok((generation, summary)) => {
+                state.health_worker = None;
+                if generation == state.health_generation {
+                    state.health_cache = Some(summary);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                state.health_worker = None;
+            }
+        }
+    }
+
+    if state.health_cache.is_none() {
+        ui.text("Analyzing the vault...");
+        return;
     }
 
     let Some(summary) = state.health_cache.clone() else {

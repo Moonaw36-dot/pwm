@@ -1,3 +1,4 @@
+use crate::clipboard;
 use crate::config;
 use crate::file_ops::{VaultKdfParams, open_file_dialog, save_store};
 pub use crate::models::{AppState, PasswordEntry, PasswordList};
@@ -5,13 +6,14 @@ use crate::models::{ClipboardState, EntryForm, Generator, Modals, PasswordType, 
 use crate::strength::{StrengthResult, manual_strength};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
 const INPUT_CAPACITY: usize = 256;
 const CLIPBOARD_CLEAR_SECS: u64 = 10;
+const CLIPBOARD_CLEAR_RETRY_SECS: u64 = 2;
 const COPIED_NOTICE_SECS: u64 = 3;
 
 impl Vault {
@@ -19,7 +21,6 @@ impl Vault {
         Self {
             file_name: String::new(),
             file_path: None,
-            filesize: None,
             store: None,
             encryption_key: None,
             last_activity: Instant::now(),
@@ -81,14 +82,12 @@ impl Modals {
             add_entry_popup: false,
             close_add_password: false,
             settings: false,
-            error_password: false,
             warning_password: false,
             gen_password: false,
-            gen_from_add: false,
+            gen_into_form: false,
             filename: false,
             master: false,
             master_is_create: false,
-            confirm_delete: false,
             show_success: false,
             use_lastused_file: false,
         }
@@ -106,7 +105,9 @@ impl ClipboardState {
             clear_at: None,
             copied_field: None,
             copied_clear_at: None,
+            copied_fingerprint: None,
             external_copy_pending: Arc::new(AtomicBool::new(false)),
+            external_copy_fingerprint: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -114,16 +115,46 @@ impl ClipboardState {
         self.external_copy_pending.clone()
     }
 
-    fn clear_clipboard_text(&mut self) {
-        if let Some(ref mut handle) = self.handle {
-            crate::clipboard::set_excluded_from_history(handle, "");
+    pub fn backend_fingerprint_signal(&self) -> Arc<AtomicU64> {
+        self.external_copy_fingerprint.clone()
+    }
+
+    /// Wipe the clipboard when it still holds what we wrote. Returns true
+    /// when there is nothing left to clear (either wiped or given up on).
+    fn clear_clipboard_text(&mut self) -> bool {
+        let Some(ref mut handle) = self.handle else {
+            return true;
+        };
+
+        // Never destroy a value the user copied in the meantime. When the
+        // content cannot be read (e.g. the clipboard holds non-text data),
+        // leave it alone too.
+        if let Some(fingerprint) = self.copied_fingerprint {
+            let still_ours = handle
+                .get_text()
+                .is_ok_and(|current| clipboard::fingerprint(&current) == fingerprint);
+            if !still_ours {
+                self.copied_fingerprint = None;
+                return true;
+            }
         }
+
+        if clipboard::set_excluded_from_history(handle, "").is_ok() {
+            self.copied_fingerprint = None;
+            return true;
+        }
+        false
     }
 
     pub fn clear_expired(&mut self, now: Instant) {
         if self.clear_at.is_some_and(|clear_at| now >= clear_at) {
-            self.clear_clipboard_text();
-            self.clear_at = None;
+            if self.clear_clipboard_text() {
+                self.clear_at = None;
+            } else {
+                // Transient clipboard failure: retry shortly instead of
+                // leaving the secret on the system clipboard forever.
+                self.clear_at = Some(now + Duration::from_secs(CLIPBOARD_CLEAR_RETRY_SECS));
+            }
         }
 
         if self.copied_clear_at.is_some_and(|clear_at| now >= clear_at) {
@@ -133,6 +164,10 @@ impl ClipboardState {
     }
 
     fn reset(&mut self) {
+        // Lock and close wipe the clipboard unconditionally: a residual
+        // secret outliving the vault is worse than clobbering unrelated
+        // clipboard content.
+        self.copied_fingerprint = None;
         self.clear_clipboard_text();
         self.clear_at = None;
         self.copied_field = None;
@@ -140,15 +175,20 @@ impl ClipboardState {
         self.external_copy_pending.store(false, Ordering::Release);
     }
 
-    fn copy(&mut self, text: &str, field_name: &str) {
-        if let Some(ref mut handle) = self.handle {
-            crate::clipboard::set_excluded_from_history(handle, text);
+    fn copy(&mut self, text: &str, field_name: &str) -> bool {
+        let Some(ref mut handle) = self.handle else {
+            return false;
+        };
+        if clipboard::set_excluded_from_history(handle, text).is_err() {
+            return false;
         }
 
+        self.copied_fingerprint = Some(clipboard::fingerprint(text));
         let now = Instant::now();
         self.clear_at = Some(now + Duration::from_secs(CLIPBOARD_CLEAR_SECS));
         self.copied_field = Some(field_name.to_string());
         self.copied_clear_at = Some(now + Duration::from_secs(COPIED_NOTICE_SECS));
+        true
     }
 
     pub fn sync_external_copy(&mut self) {
@@ -156,6 +196,7 @@ impl ClipboardState {
             return;
         }
 
+        self.copied_fingerprint = Some(self.external_copy_fingerprint.swap(0, Ordering::AcqRel));
         let now = Instant::now();
         self.clear_at = Some(now + Duration::from_secs(CLIPBOARD_CLEAR_SECS));
         self.copied_field = Some("value".to_string());
@@ -201,11 +242,16 @@ impl AppState {
             unlock_penalty_until: None,
             light_mode: config.light_mode,
             settings_light_mode: config.light_mode,
+            settings_hide_user: config.hide_user,
+            settings_invert_copy_controls: config.invert_copy_controls,
             hide_user: config.hide_user,
             // input buffer only; the stored value is a hash
             self_destruct_pass: Zeroizing::new(String::new()),
-            invert_copy_controls: false,
+            invert_copy_controls: config.invert_copy_controls,
             card_texture: None,
+            health_worker: None,
+            health_generation: 0,
+            list_search: String::with_capacity(INPUT_CAPACITY),
         }
     }
 
@@ -236,6 +282,8 @@ impl AppState {
 
     pub fn invalidate_vault_caches(&mut self) {
         self.health_cache = None;
+        self.health_worker = None;
+        self.health_generation += 1;
         self.search_cache = None;
     }
 
@@ -248,7 +296,6 @@ impl AppState {
         self.vault.kdf_params = None;
         self.vault.file_path = None;
         self.vault.file_name.clear();
-        self.vault.filesize = None;
         self.filename_input.clear();
         self.clear_inputs();
         self.clipboard.reset();
@@ -266,6 +313,7 @@ impl AppState {
         self.master_confirm_input.zeroize();
         self.self_destruct_pass.zeroize();
         self.search.clear();
+        self.generated_password = Zeroizing::new(String::new());
         self.strength_cache = None;
         self.hibp_cache.clear();
         self.invalidate_vault_caches();
@@ -296,7 +344,9 @@ impl AppState {
     }
 
     pub fn copy_to_clipboard(&mut self, text: &str, field_name: &str) {
-        self.clipboard.copy(text, field_name);
+        if !self.clipboard.copy(text, field_name) {
+            self.custom_error_message = Some("Could not access the system clipboard.".to_string());
+        }
     }
 
     pub fn save_result(&mut self) -> Result<(), String> {
@@ -304,7 +354,7 @@ impl AppState {
             && let Some(store) = &self.vault.store
         {
             let params = self.vault.kdf_params.unwrap_or(VaultKdfParams {
-                m_cost: 65536,
+                m_cost: crate::file_ops::DEFAULT_M_COST,
                 t_cost: self.vault.iterations,
                 p_cost: 1,
             });
@@ -327,7 +377,7 @@ pub fn hash_password(password: &str) -> [u8; 32] {
 
 /// Backoff before the next unlock attempt, in seconds, after the given number
 /// of failed attempts. The first three failures are free; each subsequent
-/// failure doubles the wait, capped at one minute. This is an in-app speed
+/// failure doubles the wait, capped at 64 seconds. This is an in-app speed
 /// bump only: it resets when the app restarts and does not protect the vault
 /// file from offline attacks — Argon2id remains the real defense.
 pub fn unlock_penalty_secs(failed_unlocks: u32) -> u64 {
@@ -455,6 +505,7 @@ mod tests {
         state.vault.keyfile = Some(PathBuf::from("/tmp/keyfile.aegis"));
         state.vault.keyfile_bytes = Some(Zeroizing::new(vec![2u8; 32]));
         state.form.password = Zeroizing::new("secret".into());
+        state.generated_password = Zeroizing::new("g3n3rated".into());
         state.master_input = Zeroizing::new("master".into());
         state.self_destruct_pass = Zeroizing::new("duress".into());
         state.search = "secret".into();
@@ -470,6 +521,7 @@ mod tests {
         assert!(state.vault.keyfile_bytes.is_none());
         assert!(state.vault.file_path.is_some());
         assert!(state.form.password.is_empty());
+        assert!(state.generated_password.is_empty());
         assert!(state.master_input.is_empty());
         assert!(state.self_destruct_pass.is_empty());
         assert!(state.search.is_empty());

@@ -100,7 +100,7 @@ pub fn verify_password(password: &str) -> Vec<PasswordSafety> {
 
     let mut issues = Vec::new();
 
-    if password.len() < MIN_PASSWORD_LENGTH {
+    if password.chars().count() < MIN_PASSWORD_LENGTH {
         issues.push(PasswordSafety::TooShort);
     }
     if !password.chars().any(|c| !c.is_ascii_alphanumeric()) {

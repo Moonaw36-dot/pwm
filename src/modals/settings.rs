@@ -7,6 +7,10 @@ use zeroize::Zeroize;
 pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_SETTINGS, 0.0]);
 
+    // One read per frame for the status displays; the action handlers below
+    // reload before writing so they never clobber concurrent changes.
+    let current = crate::config::load();
+
     ui.slider(
         "Auto-lock timeout (minutes)",
         0,
@@ -35,26 +39,33 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
 
     ui.text("Duress password (this vault)");
     match state.vault.file_path.clone() {
-        Some(path) => duress_controls(ui, state, path),
+        Some(path) => duress_controls(ui, state, path, &current),
         None => ui.text_disabled("Open a vault to configure its duress password."),
     }
 
     ui.separator();
 
     ui.text("Backups");
-    backup_controls(ui, state);
+    backup_controls(ui, state, &current);
 
     ui.separator();
 
-    ui.checkbox("Hide Email", &mut state.hide_user);
+    // Staged like the light-mode toggle: nothing below takes effect until
+    // Save, so closing the modal with Cancel leaves behavior unchanged.
+    ui.checkbox("Hide Email", &mut state.settings_hide_user);
     ui.text_disabled("This will censor your username / email in the \"View passwords\" tab.");
 
-    ui.checkbox("Invert copy controls", &mut state.invert_copy_controls);
+    ui.checkbox(
+        "Invert copy controls",
+        &mut state.settings_invert_copy_controls,
+    );
     ui.text_disabled("This will make left click copy the username, and right click copy the password in \"View passwords\" tab. ");
 
     if ui.button("Save") {
-        state.vault.lock_timeout_secs = (state.settings_timeout_mins * 60) as u64;
+        state.vault.lock_timeout_secs = u64::from(state.settings_timeout_mins) * 60;
         state.light_mode = state.settings_light_mode;
+        state.hide_user = state.settings_hide_user;
+        state.invert_copy_controls = state.settings_invert_copy_controls;
 
         let mut config = crate::config::load();
         config.light_mode = state.light_mode;
@@ -75,8 +86,8 @@ pub fn settings_modal(ui: &imgui::Ui, state: &mut AppState) {
     }
 }
 
-fn duress_controls(ui: &imgui::Ui, state: &mut AppState, path: PathBuf) {
-    let enabled = crate::config::load().duress_by_vault.contains_key(&path);
+fn duress_controls(ui: &imgui::Ui, state: &mut AppState, path: PathBuf, current: &Config) {
+    let enabled = current.duress_by_vault.contains_key(&path);
     ui.text_disabled(if enabled {
         "Duress is enabled for this vault."
     } else {
@@ -117,9 +128,8 @@ fn finish_duress_change(ui: &imgui::Ui, state: &mut AppState, config: Config, me
     ui.close_current_popup();
 }
 
-fn backup_controls(ui: &imgui::Ui, state: &mut AppState) {
-    let backup_dir = crate::config::load().backup_dir;
-    match &backup_dir {
+fn backup_controls(ui: &imgui::Ui, state: &mut AppState, current: &Config) {
+    match &current.backup_dir {
         Some(dir) => ui.text_disabled(format!("Backups are saved to {}.", dir.display())),
         None => ui.text_disabled("Backups are disabled."),
     }
@@ -134,7 +144,7 @@ fn backup_controls(ui: &imgui::Ui, state: &mut AppState) {
         }
     }
 
-    if backup_dir.is_some() && ui.button("Disable backups") {
+    if current.backup_dir.is_some() && ui.button("Disable backups") {
         let mut config = crate::config::load();
         config.backup_dir = None;
         if let Err(e) = crate::config::save(&config) {

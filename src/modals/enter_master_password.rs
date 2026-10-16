@@ -194,7 +194,7 @@ fn open_decoy_vault(state: &mut AppState, vault_path: &Path) {
             &build_decoy_store(),
             &duress_password,
             VaultKdfParams {
-                m_cost: 65536,
+                m_cost: crate::file_ops::DEFAULT_M_COST,
                 t_cost: 3,
                 p_cost: 1,
             },
@@ -216,7 +216,6 @@ fn open_decoy_vault(state: &mut AppState, vault_path: &Path) {
     state.vault.keyfile = None;
     state.vault.keyfile_bytes = None;
     state.vault.keyfile_hash = None;
-    state.vault.filesize = None;
     let name = decoy_path
         .file_name()
         .and_then(|name| name.to_str())

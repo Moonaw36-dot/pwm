@@ -16,7 +16,7 @@ fn is_allowed_external_url(url: &str) -> bool {
     lower.starts_with("https://") || lower.starts_with("http://")
 }
 
-fn entry_matches_search(entry: &PasswordEntry, query: &str) -> bool {
+pub(crate) fn entry_matches_search(entry: &PasswordEntry, query: &str) -> bool {
     query.is_empty()
         || entry.label.to_lowercase().contains(query)
         || entry.username.to_lowercase().contains(query)
@@ -50,15 +50,9 @@ fn masked_card_number(entry: &PasswordEntry) -> String {
         .unwrap_or_default()
 }
 
-const MASKED_USER: &str = "********";
-
-fn mask_user() -> &'static str {
-    MASKED_USER
-}
-
 fn render_secure_note(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
     let mut response = EntryResponse::default();
-    let masked = "*".repeat(entry.notes.len().min(64));
+    let masked = crate::ui_tabs::health::mask_password(&entry.notes);
 
     ui.text(format!(
         "{}[{}] | {}",
@@ -90,7 +84,12 @@ fn render_card_entry(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
         .map(|date| date.as_str())
         .unwrap_or("");
 
-    ui.text(format!("[CARD] {} | {}", masked_card_number(entry), expiry));
+    ui.text(format!(
+        "[CARD] {} | {} | {}",
+        entry.label,
+        masked_card_number(entry),
+        expiry
+    ));
 
     if ui.is_item_clicked()
         && let Some(number) = &entry.number
@@ -154,7 +153,6 @@ fn current_totp(entry: &mut PasswordEntry) -> (Option<String>, Option<String>) {
     else {
         return (None, None);
     };
-    let expires_at = now - (now % TOTP_STEP_SECS) + TOTP_STEP_SECS;
 
     if let Some((code, cached_expires_at)) = &entry.totp_code_cache
         && *cached_expires_at > now
@@ -168,6 +166,14 @@ fn current_totp(entry: &mut PasswordEntry) -> (Option<String>, Option<String>) {
     let Some(totp) = &entry.totp_cache else {
         return (None, None);
     };
+    // otpauth:// URIs may carry their own period; only fall back to the
+    // common 30s grid for raw base32 secrets.
+    let step = if totp.step > 0 {
+        totp.step
+    } else {
+        TOTP_STEP_SECS
+    };
+    let expires_at = now - (now % step) + step;
     let Ok(code) = totp.generate_current() else {
         return (None, None);
     };
@@ -213,7 +219,7 @@ fn render_normal_entry(
             tags_prefix(entry.tags.as_deref()),
             entry.label,
             if hide_user {
-                mask_user()
+                "********"
             } else {
                 entry.username.as_str()
             },

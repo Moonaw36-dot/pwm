@@ -9,6 +9,8 @@ pub fn render(ui: &Ui, state: &mut AppState) {
     ui.text("Modify the fields you want to change:");
     ui.separator();
 
+    ui.input_text("Label##modify_card", &mut state.form.label)
+        .build();
     crate::modals::render_card_fields(ui, state);
 
     if ui.button("Cancel") {
@@ -21,9 +23,11 @@ pub fn render(ui: &Ui, state: &mut AppState) {
 
     if ui.button("Save") {
         if let Err(err) = crate::modals::password_modal_card::validate_card_fields(
+            state.form.label.as_str(),
             state.form.number.as_str(),
             state.form.expiration_date.as_str(),
             state.form.cvc.as_str(),
+            false,
         ) {
             state.custom_error_message = Some(err.to_string());
             return;
@@ -33,6 +37,7 @@ pub fn render(ui: &Ui, state: &mut AppState) {
             && let Some(store) = &mut state.vault.store
         {
             let mut entry = store.entries[idx].clone();
+            entry.label = std::mem::take(&mut state.form.label);
             entry.number = Some(std::mem::replace(
                 &mut state.form.number,
                 Zeroizing::new(String::new()),

@@ -19,11 +19,31 @@ const HEADER_LEN_LEGACY: usize = SALT_LEN + NONCE_LEN;
 const HEADER_LEN_V2: usize = MAGIC.len() + 1 + SALT_LEN + 12 + NONCE_LEN;
 const MAX_BACKUPS: usize = 10;
 
+/// Argon2id memory cost (KiB) used when a vault does not record its own.
+pub(crate) const DEFAULT_M_COST: u32 = 65536;
+/// Bounds on KDF parameters read from the vault header, which is untrusted
+/// input: absurd values must fail fast instead of hanging or OOMing.
+const MIN_M_COST: u32 = 8;
+const MAX_M_COST: u32 = 1_048_576;
+const MAX_T_COST: u32 = 20;
+const MAX_P_COST: u32 = 8;
+const KEYFILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VaultKdfParams {
     pub m_cost: u32,
     pub t_cost: u32,
     pub p_cost: u32,
+}
+
+fn validate_kdf_params(params: VaultKdfParams) -> Result<(), String> {
+    if !(MIN_M_COST..=MAX_M_COST).contains(&params.m_cost)
+        || !(1..=MAX_T_COST).contains(&params.t_cost)
+        || !(1..=MAX_P_COST).contains(&params.p_cost)
+    {
+        return Err("Vault file is corrupted".to_string());
+    }
+    Ok(())
 }
 
 fn set_private_permissions(path: &Path) -> Result<(), String> {
@@ -155,15 +175,54 @@ fn header_index(headers: &csv::StringRecord, names: &[&str]) -> Option<usize> {
 }
 
 fn record_value(record: &csv::StringRecord, idx: Option<usize>) -> String {
-    idx.and_then(|i| record.get(i))
-        .unwrap_or("")
-        .trim()
-        .to_string()
+    csv_unsafe(idx.and_then(|i| record.get(i)).unwrap_or("").trim())
+}
+
+/// Secrets must be preserved verbatim: trimming a password alters it.
+fn record_value_raw(record: &csv::StringRecord, idx: Option<usize>) -> String {
+    csv_unsafe(idx.and_then(|i| record.get(i)).unwrap_or(""))
 }
 
 fn optional_record_value(record: &csv::StringRecord, idx: Option<usize>) -> Option<String> {
     let value = record_value(record, idx);
     if value.is_empty() { None } else { Some(value) }
+}
+
+fn optional_record_value_raw(record: &csv::StringRecord, idx: Option<usize>) -> Option<String> {
+    let value = record_value_raw(record, idx);
+    if value.is_empty() { None } else { Some(value) }
+}
+
+/// Characters a spreadsheet evaluates as a formula when a cell starts with
+/// them; a leading quote disables that.
+const CSV_FORMULA_PREFIXES: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// Fields starting with a quote are guarded too, so that `csv_unsafe` can
+/// always tell a guard quote from a quote the user typed.
+fn csv_needs_guard(field: &str) -> bool {
+    field.starts_with(CSV_FORMULA_PREFIXES) || field.starts_with('\'')
+}
+
+/// Neutralize spreadsheet formula injection on export.
+fn csv_safe(field: &str) -> String {
+    if csv_needs_guard(field) {
+        format!("'{field}")
+    } else {
+        field.to_string()
+    }
+}
+
+/// Undo `csv_safe`: strip the guard quote when what follows it is a formula
+/// trigger or another quote. Round-trips are lossless; a third-party field
+/// that genuinely starts with `'` plus a trigger is the known trade-off.
+fn csv_unsafe(field: &str) -> String {
+    if (field.starts_with('\'') && field[1..].starts_with(CSV_FORMULA_PREFIXES))
+        || field.starts_with("''")
+    {
+        field[1..].to_string()
+    } else {
+        field.to_string()
+    }
 }
 
 pub fn import_csv() -> Result<Option<PasswordList>, String> {
@@ -187,6 +246,9 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
     let idx_secure_note = header_index(&headers, &["secure_note", "secure"]);
     let idx_custom_fields = header_index(&headers, &["custom_fields", "fields"]);
     let idx_favorite = header_index(&headers, &["favorite", "favourite"]);
+    let idx_created_at = header_index(&headers, &["created_at"]);
+    let idx_trashed_at = header_index(&headers, &["trashed_at"]);
+    let idx_password_history = header_index(&headers, &["password_history"]);
 
     let mut entries = Vec::new();
     for result in reader.records() {
@@ -202,11 +264,20 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
         {
             Some("card") => PasswordType::Card,
             Some("wifi") | Some("wi-fi") => PasswordType::WiFi,
-            _ => PasswordType::Normal,
+            Some(other) => {
+                log::warn!("CSV import: unknown type \"{other}\", imported as a normal entry");
+                PasswordType::Normal
+            }
+            None => PasswordType::Normal,
         };
         let custom_fields = match optional_record_value(&record, idx_custom_fields) {
             Some(value) => serde_json::from_str(&value)
                 .map_err(|error| format!("Invalid custom_fields JSON: {error}"))?,
+            None => Vec::new(),
+        };
+        let password_history = match optional_record_value(&record, idx_password_history) {
+            Some(value) => serde_json::from_str(&value)
+                .map_err(|error| format!("Invalid password_history JSON: {error}"))?,
             None => Vec::new(),
         };
         let is_secure_note = optional_record_value(&record, idx_secure_note)
@@ -220,27 +291,31 @@ pub fn import_csv() -> Result<Option<PasswordList>, String> {
                 None
             }
         });
+        let created_at =
+            optional_record_value(&record, idx_created_at).and_then(|value| value.parse().ok());
+        let trashed_at =
+            optional_record_value(&record, idx_trashed_at).and_then(|value| value.parse().ok());
 
         entries.push(PasswordEntry {
             label: record_value(&record, idx_label),
             username: record_value(&record, idx_username),
-            password: Zeroizing::new(record_value(&record, idx_password)),
+            password: Zeroizing::new(record_value_raw(&record, idx_password)),
             url: record_value(&record, idx_url),
             notes: Zeroizing::new(record_value(&record, idx_notes)),
             tags,
             totp_secret: totp_secret.into(),
             custom_fields: Zeroizing::new(custom_fields),
             is_secure_note,
-            created_at: None,
+            created_at,
             totp_cache: None,
             password_type,
-            number: optional_record_value(&record, idx_number).map(Zeroizing::new),
-            expiration_date: optional_record_value(&record, idx_expiration).map(Zeroizing::new),
-            cvc: optional_record_value(&record, idx_cvc).map(Zeroizing::new),
+            number: optional_record_value_raw(&record, idx_number).map(Zeroizing::new),
+            expiration_date: optional_record_value_raw(&record, idx_expiration).map(Zeroizing::new),
+            cvc: optional_record_value_raw(&record, idx_cvc).map(Zeroizing::new),
             favorite,
             totp_code_cache: None,
-            trashed_at: None,
-            password_history: Vec::new(),
+            trashed_at,
+            password_history,
         });
     }
 
@@ -281,6 +356,9 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
             "secure_note",
             "custom_fields",
             "favorite",
+            "created_at",
+            "trashed_at",
+            "password_history",
         ])
         .map_err(|e| e.to_string())?;
 
@@ -326,23 +404,37 @@ pub fn export_csv(store: &PasswordList) -> Result<(), String> {
             .favorite
             .map(|value| value.to_string())
             .unwrap_or_default();
+        let created_at = entry
+            .created_at
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let trashed_at = entry
+            .trashed_at
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let password_history =
+            serde_json::to_string(&entry.password_history).map_err(|e| e.to_string())?;
+        let record = [
+            entry.label.clone(),
+            entry.username.clone(),
+            entry.password.to_string(),
+            entry.url.clone(),
+            entry.notes.to_string(),
+            tags,
+            totp,
+            entry_type,
+            number,
+            expiration,
+            cvc,
+            secure_note,
+            custom_fields,
+            favorite,
+            created_at,
+            trashed_at,
+            password_history,
+        ];
         writer
-            .write_record([
-                entry.label.clone(),
-                entry.username.clone(),
-                entry.password.to_string(),
-                entry.url.clone(),
-                entry.notes.to_string(),
-                tags,
-                totp,
-                entry_type,
-                number,
-                expiration,
-                cvc,
-                secure_note,
-                custom_fields,
-                favorite,
-            ])
+            .write_record(record.iter().map(|field| csv_safe(field)))
             .map_err(|e| e.to_string())?;
     }
 
@@ -357,6 +449,20 @@ pub(crate) fn derive_key_params(
     params: VaultKdfParams,
     keyfile_bytes: Option<&[u8]>,
 ) -> Result<crate::locked_buf::LockedKey, String> {
+    validate_kdf_params(params)?;
+    let raw = argon2_key(password, salt, params)?;
+    Ok(match keyfile_bytes {
+        Some(kf) => mix_keyfile(&raw, kf),
+        None => raw,
+    })
+}
+
+/// Raw Argon2id output before any keyfile is mixed in.
+fn argon2_key(
+    password: &str,
+    salt: &[u8; 16],
+    params: VaultKdfParams,
+) -> Result<crate::locked_buf::LockedKey, String> {
     let mut key = crate::locked_buf::LockedKey::zeroed();
     let argon_params = argon2::Params::new(params.m_cost, params.t_cost, params.p_cost, Some(32))
         .map_err(|e| format!("Argon2 params: {e}"))?;
@@ -367,16 +473,49 @@ pub(crate) fn derive_key_params(
     )
     .hash_password_into(password.as_bytes(), salt, &mut *key)
     .map_err(|e| format!("Key derivation failed: {e}"))?;
+    Ok(key)
+}
 
-    if let Some(kf) = keyfile_bytes {
-        let mut combined = Zeroizing::new(Vec::with_capacity(32 + kf.len()));
-        let key_ref: &[u8; 32] = &key;
-        combined.extend_from_slice(key_ref);
-        combined.extend_from_slice(kf);
-        key.copy_from_slice(&Sha256::digest(&*combined));
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK_LEN: usize = 64;
+    let mut padded = [0u8; BLOCK_LEN];
+    if key.len() > BLOCK_LEN {
+        padded[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        padded[..key.len()].copy_from_slice(key);
     }
 
-    Ok(key)
+    let mut inner = Sha256::new();
+    let mut outer = Sha256::new();
+    inner.update(padded.iter().map(|b| b ^ 0x36).collect::<Vec<u8>>());
+    inner.update(message);
+    outer.update(padded.iter().map(|b| b ^ 0x5c).collect::<Vec<u8>>());
+    outer.update(inner.finalize());
+    outer.finalize().into()
+}
+
+/// HKDF-SHA256 with the Argon2id output as salt and the keyfile as input key
+/// material, so the vault key needs both factors to reconstruct.
+fn combine_keyfile(argon_key: &[u8; 32], keyfile: &[u8]) -> [u8; 32] {
+    const INFO: &[u8] = b"aegis keyfile";
+    let prk = hmac_sha256(argon_key, keyfile);
+    hmac_sha256(&prk, &[INFO, &[1u8]].concat())
+}
+
+/// Vaults saved before the HKDF combiner used a bare SHA-256 over the
+/// concatenated keys; kept so those vaults still open.
+fn combine_keyfile_legacy(argon_key: &[u8; 32], keyfile: &[u8]) -> [u8; 32] {
+    let mut combined = Zeroizing::new(Vec::with_capacity(32 + keyfile.len()));
+    combined.extend_from_slice(argon_key);
+    combined.extend_from_slice(keyfile);
+    Sha256::digest(&*combined).into()
+}
+
+/// Derive the vault key from the raw Argon2id output plus keyfile bytes.
+fn mix_keyfile(raw: &crate::locked_buf::LockedKey, keyfile: &[u8]) -> crate::locked_buf::LockedKey {
+    let mut key = crate::locked_buf::LockedKey::zeroed();
+    key.copy_from_slice(&combine_keyfile(raw, keyfile));
+    key
 }
 
 pub(crate) fn encrypt_store(
@@ -386,20 +525,32 @@ pub(crate) fn encrypt_store(
     params: VaultKdfParams,
 ) -> Result<Vec<u8>, String> {
     let json = Zeroizing::new(serde_json::to_string_pretty(store).map_err(|e| e.to_string())?);
-    let cipher = Aes256Gcm::new(key.into());
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-    let ciphertext = cipher
-        .encrypt(&nonce, json.as_bytes())
-        .map_err(|e| e.to_string())?;
 
-    let mut out = Vec::with_capacity(HEADER_LEN_V2 + ciphertext.len());
+    // Build the header first and authenticate it as AAD, so every parameter
+    // the key was derived from is bound to the ciphertext.
+    let mut out = Vec::with_capacity(HEADER_LEN_V2 + json.len() + 16);
     out.extend_from_slice(&MAGIC);
     out.push(FORMAT_VERSION);
     out.extend_from_slice(salt);
     out.extend_from_slice(&params.m_cost.to_le_bytes());
     out.extend_from_slice(&params.t_cost.to_le_bytes());
     out.extend_from_slice(&params.p_cost.to_le_bytes());
-    out.extend_from_slice(&nonce);
+    let nonce_offset = out.len();
+    out.resize(nonce_offset + NONCE_LEN, 0);
+
+    let cipher = Aes256Gcm::new(key.into());
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    out[nonce_offset..nonce_offset + NONCE_LEN].copy_from_slice(&nonce);
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            aes_gcm::aead::Payload {
+                msg: json.as_bytes(),
+                aad: &out,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
     out.extend_from_slice(&ciphertext);
     Ok(out)
 }
@@ -442,9 +593,9 @@ pub fn create_file(file_name: &str, state: &mut AppState) -> Result<(), String> 
     let mut salt = [0u8; SALT_LEN];
     rand::rng().fill_bytes(&mut salt);
 
-    let iterations = state.form.iterations_entry as u32;
+    let iterations = state.form.iterations_entry;
     let params = VaultKdfParams {
-        m_cost: 65536,
+        m_cost: DEFAULT_M_COST,
         t_cost: iterations,
         p_cost: 1,
     };
@@ -468,6 +619,13 @@ pub fn load_keyfile(state: &mut AppState) -> Result<(), String> {
         .pick_file()
         .ok_or("No file selected".to_string())?;
 
+    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if metadata.len() > KEYFILE_MAX_BYTES {
+        return Err(format!(
+            "Keyfile is too large (limit is {} MiB).",
+            KEYFILE_MAX_BYTES / (1024 * 1024)
+        ));
+    }
     let bytes = Zeroizing::new(std::fs::read(&path).map_err(|e| e.to_string())?);
     let hash: [u8; 32] = Sha256::digest(&bytes).into();
 
@@ -535,24 +693,15 @@ pub fn create_key_file(state: &mut AppState) -> Result<(), String> {
     if let (Some(enc_key), Some(store)) =
         (state.vault.encryption_key.take(), state.vault.store.take())
     {
-        let mut combined = Zeroizing::new(Vec::with_capacity(32 + 32));
-        let enc_arr: &[u8; 32] = &enc_key;
-        combined.extend_from_slice(enc_arr);
-        combined.extend_from_slice(&*key);
-        let digest = Sha256::digest(&*combined);
         let mut new_key = crate::locked_buf::LockedKey::zeroed();
-        new_key.copy_from_slice(&digest);
+        new_key.copy_from_slice(&combine_keyfile(&enc_key, &*key));
 
-        if let Err(e) = save_store(
-            &state.vault.file_path,
-            &store,
-            &new_key,
-            VaultKdfParams {
-                m_cost: 65536,
-                t_cost: state.vault.iterations,
-                p_cost: 1,
-            },
-        ) {
+        let params = state.vault.kdf_params.unwrap_or(VaultKdfParams {
+            m_cost: DEFAULT_M_COST,
+            t_cost: state.vault.iterations,
+            p_cost: 1,
+        });
+        if let Err(e) = save_store(&state.vault.file_path, &store, &new_key, params) {
             state.vault.encryption_key = Some(enc_key);
             state.vault.store = Some(store);
             state.vault.keyfile = previous_keyfile;
@@ -596,12 +745,32 @@ fn try_decrypt(
     params: VaultKdfParams,
     keyfile_bytes: Option<&[u8]>,
 ) -> Option<(PasswordList, crate::locked_buf::LockedKey)> {
-    let key = derive_key_params(password, salt, params, keyfile_bytes).ok()?;
-    let cipher = Aes256Gcm::new((&*key).into());
-    let plaintext = Zeroizing::new(cipher.decrypt(nonce.into(), ciphertext).ok()?);
-    let json = Zeroizing::new(String::from_utf8(plaintext.to_vec()).ok()?);
-    let store: PasswordList = serde_json::from_str(&json).ok()?;
-    Some((store, key))
+    let raw = derive_key_params(password, salt, params, None).ok()?;
+
+    // Vault-format v1 predates the HKDF combiner, so legacy vaults may have
+    // been keyed with either combiner; try both before giving up.
+    let mut candidate_keys = Vec::new();
+    match keyfile_bytes {
+        Some(kf) => {
+            let mut legacy = crate::locked_buf::LockedKey::zeroed();
+            legacy.copy_from_slice(&combine_keyfile_legacy(&raw, kf));
+            candidate_keys.push(mix_keyfile(&raw, kf));
+            candidate_keys.push(legacy);
+        }
+        None => candidate_keys.push(raw),
+    }
+
+    for key in candidate_keys {
+        let cipher = Aes256Gcm::new((&*key).into());
+        let Ok(plaintext) = cipher.decrypt(nonce.into(), ciphertext) else {
+            continue;
+        };
+        let plaintext = Zeroizing::new(plaintext);
+        let json = Zeroizing::new(String::from_utf8(plaintext.to_vec()).ok()?);
+        let store: PasswordList = serde_json::from_str(&json).ok()?;
+        return Some((store, key));
+    }
+    None
 }
 
 fn load_store_v2(
@@ -652,19 +821,56 @@ fn load_store_v2(
         t_cost,
         p_cost,
     };
+    validate_kdf_params(params)?;
     let ciphertext = &data[HEADER_LEN_V2..];
 
-    let key = derive_key_params(password, &salt, params, keyfile_bytes)?;
-    let cipher = Aes256Gcm::new((&*key).into());
-    let plaintext = cipher
-        .decrypt((&nonce).into(), ciphertext)
-        .map_err(|_| "Decryption failed: wrong master password or corrupted file".to_string())?;
-    let json = String::from_utf8(plaintext)
-        .map_err(|_| "Decryption failed: wrong master password or corrupted file".to_string())?;
-    let store: PasswordList =
-        serde_json::from_str(&json).map_err(|e| format!("Corrupted vault contents: {e}"))?;
+    // Vaults saved before the header was authenticated as AAD, and before the
+    // HKDF keyfile combiner, must still open: try the current forms first,
+    // then fall back per candidate key.
+    let raw = argon2_key(password, &salt, params)?;
+    let mut candidate_keys = Vec::new();
+    match keyfile_bytes {
+        Some(kf) => {
+            let mut legacy = crate::locked_buf::LockedKey::zeroed();
+            legacy.copy_from_slice(&combine_keyfile_legacy(&raw, kf));
+            candidate_keys.push(mix_keyfile(&raw, kf));
+            candidate_keys.push(legacy);
+        }
+        None => candidate_keys.push(raw),
+    }
 
-    Ok((store, key, params))
+    let decrypt_error = "Decryption failed: wrong master password or corrupted file".to_string();
+    let header_aad = &data[..HEADER_LEN_V2];
+    for key in candidate_keys {
+        let cipher = Aes256Gcm::new((&*key).into());
+        let plaintext = cipher
+            .decrypt(
+                (&nonce).into(),
+                aes_gcm::aead::Payload {
+                    msg: ciphertext,
+                    aad: header_aad,
+                },
+            )
+            .or_else(|_| cipher.decrypt((&nonce).into(), ciphertext))
+            .ok();
+        let Some(plaintext) = plaintext.map(Zeroizing::new) else {
+            continue;
+        };
+        let json = match String::from_utf8(plaintext.to_vec()) {
+            Ok(json) => Zeroizing::new(json),
+            Err(_) => return Err(decrypt_error),
+        };
+        let store: PasswordList = match serde_json::from_str(&json) {
+            Ok(store) => store,
+            Err(e) if e.to_string().contains("unknown variant") => {
+                return Err("This vault was created by a newer version of Aegis".to_string());
+            }
+            Err(e) => return Err(format!("Corrupted vault contents: {e}")),
+        };
+        return Ok((store, key, params));
+    }
+
+    Err(decrypt_error)
 }
 
 pub fn load_store(
@@ -768,7 +974,9 @@ pub fn save_store(
     key: &[u8; 32],
     params: VaultKdfParams,
 ) -> Result<(), String> {
-    let Some(p) = path else { return Ok(()) };
+    let Some(p) = path else {
+        return Err("No vault file is open".to_string());
+    };
 
     let salt = read_existing_salt(p)?;
     let filedata = encrypt_store(store, key, &salt, params)?;
@@ -779,6 +987,9 @@ pub fn save_store(
 
 /// Best-effort timestamped copy of the freshly saved vault, pruned to
 /// `MAX_BACKUPS` per vault. Never fails the save.
+///
+/// The name embeds a hash of the vault path so two vaults that share a file
+/// name in different folders never collide in the shared backup directory.
 fn backup_vault(path: &Path) {
     let backup_dir = crate::config::load().backup_dir;
     let Some(dir) = backup_dir else {
@@ -791,23 +1002,34 @@ fn backup_vault(path: &Path) {
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
         return;
     };
-    let unix_secs = std::time::SystemTime::now()
+
+    let unix_nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let backup_path = dir.join(format!("{stem}.backup.{unix_secs}.aegis"));
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    let prefix = backup_prefix(path, stem);
+    let backup_path = dir.join(format!("{prefix}.backup.{unix_nanos}.aegis"));
     if let Err(error) = std::fs::copy(path, &backup_path) {
         log::warn!(
             "Failed to back up vault to {}: {error}",
             backup_path.display()
         );
     }
-    prune_backups(&dir, stem);
+    prune_backups(&dir, &prefix);
 }
 
-/// Remove the oldest `{stem}.backup.*.aegis` copies beyond `MAX_BACKUPS`,
+/// `{stem}.{hash8(path)}` prefix identifying one vault's backups.
+fn backup_prefix(path: &Path, stem: &str) -> String {
+    let digest = Sha256::digest(path.to_string_lossy().as_bytes());
+    format!(
+        "{stem}.{:08x}",
+        u32::from_be_bytes(digest[..4].try_into().unwrap_or([0; 4]))
+    )
+}
+
+/// Remove the oldest `{prefix}.backup.*.aegis` copies beyond `MAX_BACKUPS`,
 /// ordering by the numeric timestamp in the name.
-fn prune_backups(dir: &Path, stem: &str) {
-    let prefix = format!("{stem}.backup.");
+fn prune_backups(dir: &Path, prefix: &str) {
+    let stamp_prefix = format!("{prefix}.backup.");
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -816,7 +1038,7 @@ fn prune_backups(dir: &Path, stem: &str) {
         .filter_map(|entry| {
             let name = entry.file_name();
             name.to_str()?
-                .strip_prefix(&prefix)?
+                .strip_prefix(&stamp_prefix)?
                 .strip_suffix(".aegis")?
                 .parse::<u64>()
                 .ok()
@@ -827,7 +1049,7 @@ fn prune_backups(dir: &Path, stem: &str) {
     }
     stamps.sort_unstable();
     for stamp in &stamps[..stamps.len() - MAX_BACKUPS] {
-        let stale = dir.join(format!("{prefix}{stamp}.aegis"));
+        let stale = dir.join(format!("{stamp_prefix}{stamp}.aegis"));
         if let Err(error) = std::fs::remove_file(&stale) {
             log::warn!("Failed to remove old backup {}: {error}", stale.display());
         }
@@ -1131,6 +1353,151 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[test]
+    fn test_hmac_sha256_rfc4231_vector() {
+        // RFC 4231 test case 2: key "Jefe", data "what do ya want for nothing?"
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        assert_eq!(
+            hex_encode(mac),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    fn hex_encode(bytes: [u8; 32]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn test_keyfile_roundtrip_and_legacy_fallback() {
+        let password = "master_password";
+        let mut salt = [0u8; SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let params = VaultKdfParams {
+            m_cost: 2048,
+            t_cost: 2,
+            p_cost: 1,
+        };
+        let keyfile = b"arbitrary keyfile bytes";
+
+        let raw = argon2_key(password, &salt, params).unwrap();
+        let modern_key = mix_keyfile(&raw, keyfile);
+        let mut legacy_key = crate::locked_buf::LockedKey::zeroed();
+        legacy_key.copy_from_slice(&combine_keyfile_legacy(&raw, keyfile));
+
+        let encrypted = encrypt_store(&sample_store(), &modern_key, &salt, params).unwrap();
+
+        // Current combiner opens it.
+        let loaded = load_store_v2(&encrypted, password, Some(keyfile)).unwrap();
+        assert_eq!(loaded.1, modern_key);
+
+        // A vault saved with the old combiner also still opens.
+        let legacy_encrypted = encrypt_store(&sample_store(), &legacy_key, &salt, params).unwrap();
+        let loaded = load_store_v2(&legacy_encrypted, password, Some(keyfile)).unwrap();
+        assert_eq!(loaded.1, legacy_key);
+
+        // Wrong keyfile fails.
+        let encrypted = encrypt_store(&sample_store(), &modern_key, &salt, params).unwrap();
+        assert!(load_store_v2(&encrypted, password, Some(b"wrong")).is_err());
+    }
+
+    #[test]
+    fn test_pre_aad_v2_vault_still_loads() {
+        // Vaults saved by versions before header authentication were encrypted
+        // without AAD; they must keep opening with the correct password.
+        let store = sample_store();
+        let password = "master_password";
+        let mut salt = [0u8; SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let params = VaultKdfParams {
+            m_cost: 2048,
+            t_cost: 2,
+            p_cost: 1,
+        };
+
+        let key = derive_key_params(password, &salt, params, None).unwrap();
+        let json = serde_json::to_vec(&store).unwrap();
+        let cipher = Aes256Gcm::new((&*key).into());
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, &*json).unwrap();
+
+        let mut encrypted = Vec::with_capacity(HEADER_LEN_V2 + ciphertext.len());
+        encrypted.extend_from_slice(&MAGIC);
+        encrypted.push(FORMAT_VERSION);
+        encrypted.extend_from_slice(&salt);
+        encrypted.extend_from_slice(&params.m_cost.to_le_bytes());
+        encrypted.extend_from_slice(&params.t_cost.to_le_bytes());
+        encrypted.extend_from_slice(&params.p_cost.to_le_bytes());
+        encrypted.extend_from_slice(&nonce);
+        encrypted.extend_from_slice(&ciphertext);
+
+        let (loaded, loaded_key, loaded_params) =
+            load_store_v2(&encrypted, password, None).unwrap();
+        assert_eq!(loaded_key, key);
+        assert_eq!(loaded_params, params);
+        assert_eq!(loaded.entries[0].label, "test");
+    }
+
+    #[test]
+    fn test_kdf_params_bounds_are_enforced() {
+        let mut salt = [0u8; SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        for bad in [
+            VaultKdfParams {
+                m_cost: u32::MAX,
+                t_cost: 3,
+                p_cost: 1,
+            },
+            VaultKdfParams {
+                m_cost: DEFAULT_M_COST,
+                t_cost: 0,
+                p_cost: 1,
+            },
+            VaultKdfParams {
+                m_cost: DEFAULT_M_COST,
+                t_cost: u32::MAX,
+                p_cost: 1,
+            },
+            VaultKdfParams {
+                m_cost: DEFAULT_M_COST,
+                t_cost: 3,
+                p_cost: 0,
+            },
+        ] {
+            assert!(derive_key_params("pw", &salt, bad, None).is_err());
+        }
+    }
+
+    #[test]
+    fn test_csv_safe_neutralizes_formula_injection() {
+        assert_eq!(csv_safe("=HYPERLINK(1)"), "'=HYPERLINK(1)");
+        assert_eq!(csv_safe("+1+2"), "'+1+2");
+        assert_eq!(csv_safe("-cmd"), "'-cmd");
+        assert_eq!(csv_safe("@SUM(1)"), "'@SUM(1)");
+        assert_eq!(csv_safe("normal label"), "normal label");
+        assert_eq!(csv_safe(""), "");
+    }
+
+    #[test]
+    fn test_csv_guard_roundtrip_is_lossless() {
+        for original in [
+            "=HYPERLINK(1)",
+            "+1+2",
+            "-cmd",
+            "@SUM(1)",
+            "\tnotes",
+            "'-quoted",
+            "'=quoted",
+            "'plain quote",
+            "'",
+            "''-quoted",
+            "password'",
+            "normal label",
+            "",
+        ] {
+            assert_eq!(csv_unsafe(&csv_safe(original)), original);
+        }
+    }
+
     // Backup tests redirect `crate::config::load()` at a temporary config
     // directory via XDG_CONFIG_HOME, which only `dirs` on Linux honors.
     #[cfg(target_os = "linux")]
@@ -1217,8 +1584,8 @@ mod tests {
             (vault, store, key, params)
         }
 
-        fn backup_stamps(backup_dir: &Path, stem: &str) -> Vec<u64> {
-            let prefix = format!("{stem}.backup.");
+        fn backup_stamps(backup_dir: &Path, vault: &Path) -> Vec<u64> {
+            let prefix = format!("{}.backup.", backup_prefix(vault, vault_file_stem(vault)));
             let mut stamps: Vec<u64> = std::fs::read_dir(backup_dir)
                 .unwrap()
                 .map(|entry| {
@@ -1238,11 +1605,15 @@ mod tests {
             stamps
         }
 
-        fn unix_now() -> u64 {
+        fn vault_file_stem(vault: &Path) -> &str {
+            vault.file_stem().unwrap().to_str().unwrap()
+        }
+
+        fn unix_now_nanos() -> u64 {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs()
+                .as_nanos() as u64
         }
 
         #[test]
@@ -1253,17 +1624,17 @@ mod tests {
             let (vault, store, key, params) = saved_vault("save-backup");
             save_store(&Some(vault.clone()), &store, &key, params).unwrap();
 
-            let stem = vault.file_stem().unwrap().to_str().unwrap();
+            let prefix = format!("{}.backup.", backup_prefix(&vault, vault_file_stem(&vault)));
             let names: Vec<String> = std::fs::read_dir(&backup_dir)
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
                 .collect();
             assert_eq!(names.len(), 1);
             let stamp = names[0]
-                .strip_prefix(&format!("{stem}.backup."))
+                .strip_prefix(&prefix)
                 .and_then(|rest| rest.strip_suffix(".aegis"))
                 .unwrap_or_else(|| panic!("unexpected backup name {}", names[0]));
-            stamp.parse::<u64>().expect("backup stamp is unix seconds");
+            stamp.parse::<u64>().expect("backup stamp is unix nanos");
             assert_eq!(
                 std::fs::read(backup_dir.join(&names[0])).unwrap(),
                 std::fs::read(&vault).unwrap()
@@ -1274,17 +1645,44 @@ mod tests {
         }
 
         #[test]
+        fn test_backup_names_differ_per_vault_path() {
+            let backup_dir = unique_dir("collision");
+            let _config_env = TestConfig::new("collision", &config_with_backup_dir(&backup_dir));
+
+            let (vault_a, store, key, params) = saved_vault("collision-a");
+            let vault_b = vault_a
+                .parent()
+                .unwrap()
+                .join("other")
+                .join(vault_a.file_name().unwrap());
+            std::fs::create_dir_all(vault_b.parent().unwrap()).unwrap();
+            write_new_vault_file(&vault_b, &store, "password", params, None).unwrap();
+
+            save_store(&Some(vault_a.clone()), &store, &key, params).unwrap();
+            save_store(&Some(vault_b.clone()), &store, &key, params).unwrap();
+
+            let names: Vec<String> = std::fs::read_dir(&backup_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(names.len(), 2, "same-stem vaults must not collide");
+
+            let _ = std::fs::remove_file(vault_a);
+            let _ = std::fs::remove_file(vault_b);
+            let _ = std::fs::remove_dir_all(backup_dir);
+        }
+
+        #[test]
         fn test_save_store_keeps_only_newest_backups() {
             let backup_dir = unique_dir("prune");
             let _config_env = TestConfig::new("prune", &config_with_backup_dir(&backup_dir));
 
             let (vault, store, key, params) = saved_vault("prune-backup");
-            let stem = vault.file_stem().unwrap().to_str().unwrap();
-            let prefix = format!("{stem}.backup.");
-            let now = unix_now();
+            let prefix = format!("{}.backup.", backup_prefix(&vault, vault_file_stem(&vault)));
+            let now = unix_now_nanos();
 
-            // Saves within the same second share one backup name, so seed
-            // older stamps to make pruning observable without sleeping.
+            // Seed older stamps so pruning is observable without sleeping;
+            // nanosecond names keep rapid saves from collapsing into one file.
             for age in 1..=(MAX_BACKUPS as u64 + 2) {
                 std::fs::write(
                     backup_dir.join(format!("{prefix}{}.aegis", now - age)),
@@ -1297,11 +1695,10 @@ mod tests {
                 save_store(&Some(vault.clone()), &store, &key, params).unwrap();
             }
 
-            let stamps = backup_stamps(&backup_dir, stem);
+            let stamps = backup_stamps(&backup_dir, &vault);
             assert_eq!(stamps.len(), MAX_BACKUPS);
-            let oldest_kept = now - (MAX_BACKUPS as u64 - 1);
-            assert!(stamps.iter().all(|stamp| *stamp >= oldest_kept));
-            for age in MAX_BACKUPS as u64..=(MAX_BACKUPS as u64 + 2) {
+            assert!(stamps.iter().all(|stamp| *stamp >= now));
+            for age in 1..=(MAX_BACKUPS as u64 + 2) {
                 assert!(
                     !backup_dir
                         .join(format!("{prefix}{}.aegis", now - age))

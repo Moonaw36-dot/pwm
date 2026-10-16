@@ -11,7 +11,7 @@ ureq = "3"
 sha1 = "0.11.0"
 totp-rs = { version = "2.0.1", features = ["otpauth"] }
 aes-gcm = "0.10.3"
-argon2 = "0.6.0-rc.3"
+argon2 = "0.5"
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 imgui = "0.12"
 imgui-winit-support = "0.12"

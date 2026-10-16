@@ -1,6 +1,7 @@
 use crate::models::AppState;
 use crate::{theme, ui_tabs};
 use std::time::Instant;
+use zeroize::Zeroizing;
 
 pub fn build_ui(ui: &imgui::Ui, state: &mut AppState) {
     state.clipboard.sync_external_copy();
@@ -71,8 +72,11 @@ fn render_file_menu(ui: &imgui::Ui, state: &mut AppState) {
         }
         ui.separator();
         if ui.menu_item("Settings") {
-            state.settings_timeout_mins = (state.vault.lock_timeout_secs / 60) as u32;
+            state.settings_timeout_mins =
+                u32::try_from(state.vault.lock_timeout_secs / 60).unwrap_or(u32::MAX);
             state.settings_light_mode = state.light_mode;
+            state.settings_hide_user = state.hide_user;
+            state.settings_invert_copy_controls = state.invert_copy_controls;
             state.modals.settings = true;
         }
     });
@@ -95,7 +99,10 @@ fn import_csv(state: &mut AppState) {
 fn render_password_menu(ui: &imgui::Ui, state: &mut AppState) {
     ui.menu("Passwords", || {
         if ui.menu_item("Generate password") {
+            // Standalone generator: no form to fill, start from a clean slate.
             state.modals.gen_password = true;
+            state.modals.gen_into_form = false;
+            state.generated_password = Zeroizing::new(String::new());
         }
         if ui.menu_item("Add a password") {
             state.modals.add_password = true;
@@ -171,12 +178,6 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
         crate::modals::lastusedfile::use_lastused_file(ui, state);
     }
 
-    open_popup_once(ui, &mut state.modals.confirm_delete, "Confirm Delete");
-
-    if let Some(_token) = ui.begin_modal_popup("Confirm Delete") {
-        crate::modals::confirm_delete_modal(ui, state);
-    }
-
     open_popup_once(ui, &mut state.modals.master, "Master password");
 
     if let Some(_token) = ui.begin_modal_popup("Master password") {
@@ -201,10 +202,13 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
 
     render_add_password_modal(ui, state);
 
-    if state.edit_index.is_some() {
-        ui.open_popup("Modify entry");
-    }
     if let Some(_token) = ui.begin_modal_popup("Modify entry") {
+        // Only the focused popup reacts to Esc, so dismissing a popup opened
+        // above this one never wipes the form beneath it.
+        if ui.is_window_focused() && ui.is_key_pressed(imgui::Key::Escape) {
+            state.edit_index = None;
+            state.clear_inputs();
+        }
         crate::modals::modify_entry_modal(ui, state);
     }
 
@@ -212,6 +216,10 @@ fn render_modals(ui: &imgui::Ui, state: &mut AppState) {
         ui.open_popup("Delete entry");
     }
     if let Some(_token) = ui.begin_modal_popup("Delete entry") {
+        if ui.is_window_focused() && ui.is_key_pressed(imgui::Key::Escape) {
+            state.delete_idx = None;
+            ui.close_current_popup();
+        }
         crate::modals::confirm_delete_modal(ui, state);
     }
 
@@ -247,18 +255,12 @@ fn render_add_password_modal(ui: &imgui::Ui, state: &mut AppState) {
         }
     }
 
-    open_popup_once(ui, &mut state.modals.error_password, "Error");
-    if let Some(_token) = ui.begin_modal_popup("Error") {
-        crate::modals::error_password_modal(ui);
-    }
-
     open_popup_once(ui, &mut state.modals.warning_password, "Warning");
     if let Some(_token) = ui.begin_modal_popup("Warning") {
         crate::modals::warning_modal(ui, state);
     }
 
     if state.modals.gen_password {
-        state.modals.gen_from_add = true;
         open_popup_once(ui, &mut state.modals.gen_password, "Generate password");
     }
     if let Some(_token) = ui.begin_modal_popup("Generate password") {

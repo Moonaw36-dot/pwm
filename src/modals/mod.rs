@@ -1,7 +1,6 @@
 pub mod confirm_delete;
 pub mod custom_error;
 pub mod enter_master_password;
-pub mod error_password;
 pub mod generate_password;
 pub mod lastusedfile;
 pub mod modify_entry;
@@ -18,7 +17,6 @@ pub mod warning;
 pub use confirm_delete::confirm_delete_modal;
 pub use custom_error::custom_error_modal;
 pub use enter_master_password::enter_master_password;
-pub use error_password::error_password_modal;
 pub use generate_password::generate_password_modal;
 pub use modify_entry::modify_entry_modal;
 pub use new_file::new_file_title_modal;
@@ -230,10 +228,17 @@ pub(crate) fn render_entries_list(
     from: &str,
 ) -> Option<(u32, PasswordEntry)> {
     if let Some(store) = &state.vault.store {
+        ui.input_text(format!("Search##{from}_list"), &mut state.list_search)
+            .build();
+        let query = state.list_search.to_lowercase();
+
         let mut clicked_idx = None;
         let mut clicked_entry = None;
         for (i, entry) in store.entries.iter().enumerate() {
             if is_trashed(entry) {
+                continue;
+            }
+            if !crate::ui_tabs::view::entry_matches_search(entry, &query) {
                 continue;
             }
             if entry.password_type == PasswordType::Card {

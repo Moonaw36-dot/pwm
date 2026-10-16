@@ -2,7 +2,7 @@ use argon2::Argon2;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 /// Duress password, stored as an Argon2id hash with a random salt.
@@ -71,13 +71,29 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+fn hex_val(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn unhex(s: &str) -> Result<Vec<u8>, ()> {
-    if !s.len().is_multiple_of(2) {
+    let bytes = s.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         return Err(());
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+    bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            let hi = hex_val(pair[0]).ok_or(())?;
+            let lo = hex_val(pair[1]).ok_or(())?;
+            Ok((hi << 4) | lo)
+        })
         .collect()
 }
 
@@ -89,6 +105,7 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 pub struct Config {
     #[serde(default)]
     pub light_mode: bool,
+    #[serde(default = "default_lock_timeout_secs")]
     pub lock_timeout_secs: u64,
     /// Duress password per vault path; entering it at that vault's unlock
     /// opens the vault's decoy instead of the real vault.
@@ -107,7 +124,7 @@ pub struct Config {
     pub last_used_file: PathBuf,
     #[serde(default)]
     pub hide_user: bool,
-    #[serde(default)]
+    #[serde(default = "default_invert_copy_controls")]
     pub invert_copy_controls: bool,
     /// Directory for automatic vault backups; `None` disables backups.
     #[serde(default)]
@@ -118,7 +135,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             light_mode: false,
-            lock_timeout_secs: 300,
+            lock_timeout_secs: default_lock_timeout_secs(),
             duress_by_vault: HashMap::new(),
             legacy_duress: Duress::default(),
             self_destruct_pass: Zeroizing::new(String::new()),
@@ -131,8 +148,29 @@ impl Default for Config {
     }
 }
 
+fn default_lock_timeout_secs() -> u64 {
+    300
+}
+
+fn default_invert_copy_controls() -> bool {
+    true
+}
+
 fn config_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("aegis").join("config.json"))
+}
+
+/// Keep an unparseable config around instead of overwriting it with defaults,
+/// so duress and keyfile records stay recoverable by hand.
+fn quarantine_corrupt_config(path: &Path) {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let backup = path.with_extension(format!("json.corrupt-{stamp}"));
+    match std::fs::rename(path, &backup) {
+        Ok(()) => log::warn!("Corrupt config moved to {}", backup.display()),
+        Err(error) => log::warn!("Could not quarantine corrupt config: {error}"),
+    }
 }
 
 pub fn load() -> Config {
@@ -153,6 +191,7 @@ pub fn load() -> Config {
         Ok(c) => c,
         Err(e) => {
             log::error!("Failed to parse config, using default config: {e}");
+            quarantine_corrupt_config(&path);
             return Config::default();
         }
     };

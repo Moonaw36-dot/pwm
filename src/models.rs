@@ -4,7 +4,7 @@ use crate::strength::StrengthResult;
 use arboard::Clipboard;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{Arc, atomic::AtomicBool, atomic::AtomicU64};
 use std::time::Instant;
 use totp_rs::TOTP;
 use zeroize::Zeroizing;
@@ -80,7 +80,7 @@ pub enum PasswordType {
     WiFi,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PasswordList {
     pub entries: Vec<PasswordEntry>,
 }
@@ -95,7 +95,6 @@ pub struct HealthSummary {
 pub struct Vault {
     pub file_name: String,
     pub file_path: Option<PathBuf>,
-    pub filesize: Option<u64>,
     pub store: Option<PasswordList>,
     pub encryption_key: Option<crate::locked_buf::LockedKey>,
     pub last_activity: Instant,
@@ -108,7 +107,7 @@ pub struct Vault {
 }
 
 pub struct EntryForm {
-    pub iterations_entry: i32,
+    pub iterations_entry: u32,
 
     // PASSWORD NORMAL
     pub label: String,
@@ -145,14 +144,14 @@ pub struct Modals {
     pub add_entry_popup: bool,
     pub close_add_password: bool,
     pub settings: bool,
-    pub error_password: bool,
     pub warning_password: bool,
     pub gen_password: bool,
-    pub gen_from_add: bool,
+    /// The generator was opened while an entry form is active, so it offers
+    /// "Use this" to fill the form instead of only copying to the clipboard.
+    pub gen_into_form: bool,
     pub filename: bool,
     pub master: bool,
     pub master_is_create: bool,
-    pub confirm_delete: bool,
     pub show_success: bool,
     pub use_lastused_file: bool,
 }
@@ -162,7 +161,11 @@ pub struct ClipboardState {
     pub clear_at: Option<Instant>,
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
+    /// Hash of what we last wrote, so the auto-clear only wipes our own data.
+    pub copied_fingerprint: Option<u64>,
+    /// Set by the imgui clipboard backend whenever it writes a value.
     pub external_copy_pending: Arc<AtomicBool>,
+    pub external_copy_fingerprint: Arc<AtomicU64>,
 }
 
 pub type HibpPending = (
@@ -197,7 +200,13 @@ pub struct AppState {
     pub hibp_pending: Vec<HibpPending>,
     pub hibp_cancel: Option<Arc<AtomicBool>>,
     pub health_cache: Option<HealthSummary>,
+    /// Background worker computing a fresh health summary; carries the vault
+    /// generation it was built from so stale results are discarded.
+    pub health_worker: Option<std::sync::mpsc::Receiver<(u64, HealthSummary)>>,
+    pub health_generation: u64,
     pub search_cache: Option<(String, Vec<usize>)>,
+    /// Filter box shared by the Modify and Delete entry lists.
+    pub list_search: String,
     pub should_exit: bool,
     pub failed_unlocks: u32,
     pub unlock_penalty_until: Option<Instant>,
@@ -205,6 +214,8 @@ pub struct AppState {
     // settings
     pub light_mode: bool,
     pub settings_light_mode: bool,
+    pub settings_hide_user: bool,
+    pub settings_invert_copy_controls: bool,
     pub self_destruct_pass: Zeroizing<String>,
     pub hide_user: bool,
     pub invert_copy_controls: bool,

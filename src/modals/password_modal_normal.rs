@@ -2,7 +2,6 @@ use crate::app::AppState;
 use crate::modals::{add_entry_from_inputs, render_strength_bar};
 use crate::strength::verify_password;
 use crate::theme;
-use zeroize::Zeroizing;
 
 pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
@@ -20,11 +19,6 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         add_entry_from_inputs(state);
         state.clear_inputs();
         state.modals.close_add_password = false;
-    }
-
-    if state.form.is_secure_note {
-        state.form.username.clear();
-        state.form.password = Zeroizing::new(String::new());
     }
 
     if !state.form.is_secure_note {
@@ -47,6 +41,7 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
 
         if ui.button("Generate password") {
             state.modals.gen_password = true;
+            state.modals.gen_into_form = true;
         }
 
         ui.input_text("TOTP##add", &mut state.form.totp).build();
@@ -65,7 +60,6 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             state.form.is_secure_note,
         ) {
             state.custom_error_message = Some(error.to_string());
-            state.modals.error_password = true;
         } else if !state.form.is_secure_note && !verify_password(&state.form.password).is_empty() {
             state.modals.warning_password = true;
         } else {
