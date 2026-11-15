@@ -1,0 +1,18 @@
+[package]
+name = "aegis-kdbx"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-MIT-Attribution"
+description = "Import/export between KeePass KDBX databases and Aegis vault contents"
+
+[dependencies]
+aegis-core = { path = "../aegis-core" }
+keepass = { version = "0.17", features = ["save_kdbx4"] }
+zeroize = "1"
+chrono = { version = "0.4", default-features = false }
+serde_json = "1"
+# Not used directly: enables quick-xml's `overlapped-lists` for keepass' XML
+# parser so entries whose <String> elements are not contiguous (as written by
+# pykeepass and other tools) can be read instead of failing with
+# "duplicate field `String`".
+quick-xml = { version = "0.42", default-features = false, features = ["overlapped-lists"] }

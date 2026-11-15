@@ -59,4 +59,4 @@ strip = true
 lto = "thin"
 
 [workspace]
-members = [".", "aegis-core", "aegis-ffi"]
+members = [".", "aegis-core", "aegis-ffi", "aegis-kdbx"]
