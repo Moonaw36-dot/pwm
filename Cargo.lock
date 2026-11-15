@@ -38,6 +38,7 @@ dependencies = [
 name = "aegis"
 version = "1.7.2"
 dependencies = [
+ "aegis-core",
  "aes-gcm",
  "arboard",
  "argon2",
@@ -70,6 +71,21 @@ dependencies = [
  "winit",
  "zeroize",
  "zxcvbn",
+]
+
+[[package]]
+name = "aegis-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "base32",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "totp-rs",
+ "zeroize",
 ]
 
 [[package]]

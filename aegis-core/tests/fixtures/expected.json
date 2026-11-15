@@ -1,0 +1,73 @@
+{
+  "entries": [
+    {
+      "label": "GitHub",
+      "username": "moonaw",
+      "password": "hunter2-correct-horse",
+      "notes": "main account",
+      "totp_secret": "JBSWY3DPEHPK3PXP",
+      "tags": [
+        "dev"
+      ],
+      "url": "https://github.com",
+      "custom_fields": [
+        [
+          "recovery",
+          "abcd-efgh"
+        ]
+      ],
+      "is_secure_note": false,
+      "created_at": 1700000000,
+      "password_type": "Normal",
+      "number": null,
+      "expiration_date": null,
+      "cvc": null,
+      "favorite": true,
+      "trashed_at": null,
+      "password_history": [
+        {
+          "password": "old-pass",
+          "changed_at": 1700000100
+        }
+      ]
+    },
+    {
+      "label": "Visa",
+      "username": "",
+      "password": "",
+      "notes": "",
+      "totp_secret": null,
+      "tags": null,
+      "url": "",
+      "custom_fields": [],
+      "is_secure_note": false,
+      "created_at": null,
+      "password_type": "Card",
+      "number": "4111111111111111",
+      "expiration_date": "12/30",
+      "cvc": "123",
+      "favorite": null,
+      "trashed_at": 1700000200,
+      "password_history": []
+    },
+    {
+      "label": "Home WiFi",
+      "username": "",
+      "password": "wifi-pass",
+      "notes": "",
+      "totp_secret": null,
+      "tags": null,
+      "url": "",
+      "custom_fields": [],
+      "is_secure_note": false,
+      "created_at": null,
+      "password_type": "WiFi",
+      "number": null,
+      "expiration_date": null,
+      "cvc": null,
+      "favorite": null,
+      "trashed_at": null,
+      "password_history": []
+    }
+  ]
+}

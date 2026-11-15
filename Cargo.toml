@@ -57,3 +57,6 @@ opt-level = 3
 [profile.release]
 strip = true
 lto = "thin"
+
+[workspace]
+members = [".", "aegis-core"]
