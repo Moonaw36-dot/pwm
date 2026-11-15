@@ -32,7 +32,7 @@ struct UnlockView: View {
                 }
 
                 Section {
-                    SecureField("Master password", text: $password)
+                    SecureField("Master password", text: $password, prompt: .hint("Master password"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .focused($passwordFocused)

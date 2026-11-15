@@ -192,10 +192,10 @@ struct DuressPasswordView: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("Duress password", text: $password)
+                    SecureField("Duress password", text: $password, prompt: .hint("Duress password"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("Confirm duress password", text: $confirm)
+                    SecureField("Confirm duress password", text: $confirm, prompt: .hint("Confirm duress password"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onSubmit { save() }
@@ -276,7 +276,7 @@ struct EnableBiometricView: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("Master password", text: $password)
+                    SecureField("Master password", text: $password, prompt: .hint("Master password"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onSubmit { enable() }
@@ -360,15 +360,15 @@ struct ChangePasswordView: View {
     var body: some View {
         Form {
             Section {
-                SecureField("Current password", text: $current)
+                SecureField("Current password", text: $current, prompt: .hint("Current password"))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             }
             Section {
-                SecureField("New password", text: $newPassword)
+                SecureField("New password", text: $newPassword, prompt: .hint("New password"))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                SecureField("Confirm new password", text: $confirm)
+                SecureField("Confirm new password", text: $confirm, prompt: .hint("Confirm new password"))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 if let problem {

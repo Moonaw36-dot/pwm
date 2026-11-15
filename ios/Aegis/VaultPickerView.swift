@@ -84,13 +84,13 @@ struct VaultPickerView: View {
                 }
 
                 Section {
-                    TextField("File name", text: $newName)
+                    TextField("File name", text: $newName, prompt: .hint("File name"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("Master password", text: $newPassword)
+                    SecureField("Master password", text: $newPassword, prompt: .hint("Master password"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("Confirm password", text: $confirmPassword)
+                    SecureField("Confirm password", text: $confirmPassword, prompt: .hint("Confirm password"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     if let createProblem {

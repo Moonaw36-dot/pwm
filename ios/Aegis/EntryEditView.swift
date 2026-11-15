@@ -41,15 +41,15 @@ struct EntryEditView: View {
                 }
 
                 Section("Details") {
-                    TextField(draft.kind == .wifi ? "Network name (label)" : "Label", text: $draft.label)
+                    TextField("Label", text: $draft.label, prompt: .hint(draft.kind == .wifi ? "Network name (label)" : "Label"))
                     if !draft.isSecureNote {
-                        TextField("Username", text: $draft.username)
+                        TextField("Username", text: $draft.username, prompt: .hint("Username"))
                             .textContentType(.username)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                         passwordField
                         if draft.kind != .wifi {
-                            TextField("Website URL", text: $draft.url)
+                            TextField("Website URL", text: $draft.url, prompt: .hint("Website URL"))
                                 .keyboardType(.URL)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
@@ -59,13 +59,13 @@ struct EntryEditView: View {
 
                 if draft.kind == .card {
                     Section("Card") {
-                        TextField("Card number", text: $draft.cardNumber)
+                        TextField("Card number", text: $draft.cardNumber, prompt: .hint("Card number"))
                             .keyboardType(.numbersAndPunctuation)
                             .textContentType(.creditCardNumber)
                             .font(.body.monospaced())
-                        TextField("Expiration (MM/YY)", text: $draft.cardExpiration)
+                        TextField("Expiration (MM/YY)", text: $draft.cardExpiration, prompt: .hint("Expiration (MM/YY)"))
                             .keyboardType(.numbersAndPunctuation)
-                        TextField("CVC", text: $draft.cardCvc)
+                        TextField("CVC", text: $draft.cardCvc, prompt: .hint("CVC"))
                             .keyboardType(.numberPad)
                             .font(.body.monospaced())
                     }
@@ -73,7 +73,7 @@ struct EntryEditView: View {
 
                 if !draft.isSecureNote && draft.kind == .normal {
                     Section {
-                        TextField("TOTP secret (Base32 or otpauth:// URI)", text: $draft.totpSecret)
+                        TextField("TOTP secret (Base32 or otpauth:// URI)", text: $draft.totpSecret, prompt: .hint("TOTP secret (Base32 or otpauth:// URI)"))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .font(.body.monospaced())
@@ -93,7 +93,7 @@ struct EntryEditView: View {
                 }
 
                 Section {
-                    TextField("work, email, bank", text: $tagsText)
+                    TextField("work, email, bank", text: $tagsText, prompt: .hint("work, email, bank"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } header: {
@@ -105,10 +105,10 @@ struct EntryEditView: View {
                 Section("Custom Fields") {
                     ForEach($draft.customFields) { $field in
                         VStack(alignment: .leading, spacing: 6) {
-                            TextField("Name", text: $field.name)
+                            TextField("Name", text: $field.name, prompt: .hint("Name"))
                                 .font(.subheadline.weight(.medium))
                                 .textInputAutocapitalization(.never)
-                            TextField("Value", text: $field.value)
+                            TextField("Value", text: $field.value, prompt: .hint("Value"))
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                         }
@@ -154,9 +154,9 @@ struct EntryEditView: View {
         HStack {
             Group {
                 if revealPassword {
-                    TextField("Password", text: $draft.password)
+                    TextField("Password", text: $draft.password, prompt: .hint("Password"))
                 } else {
-                    SecureField("Password", text: $draft.password)
+                    SecureField("Password", text: $draft.password, prompt: .hint("Password"))
                 }
             }
             .textInputAutocapitalization(.never)
