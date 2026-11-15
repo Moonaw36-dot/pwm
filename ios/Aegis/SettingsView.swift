@@ -7,6 +7,8 @@ struct SettingsView: View {
     @AppStorage(Preferences.autoLockDelayKey) private var autoLockDelay: Int = Preferences.defaultAutoLockDelay
     @AppStorage(Preferences.inactivityTimeoutKey) private var inactivityTimeout: Int = Preferences.defaultInactivityTimeout
     @State private var showEnableBiometric = false
+    @State private var showDuress = false
+    @State private var confirmRemoveDuress = false
     @State private var confirmForget = false
 
     private var appVersion: String {
@@ -26,6 +28,13 @@ struct SettingsView: View {
                     store.disableBiometricUnlock()
                 }
             }
+        )
+    }
+
+    private var autoFillBinding: Binding<Bool> {
+        Binding(
+            get: { store.autoFillEnabled },
+            set: { store.setAutoFillEnabled($0) }
         )
     }
 
@@ -73,6 +82,52 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    if store.duressEnabled {
+                        Button {
+                            showDuress = true
+                        } label: {
+                            Label("Change Duress Password", systemImage: "exclamationmark.shield")
+                        }
+                        Button("Remove Duress Password", role: .destructive) {
+                            confirmRemoveDuress = true
+                        }
+                    } else {
+                        Button {
+                            showDuress = true
+                        } label: {
+                            Label("Set Duress Password", systemImage: "exclamationmark.shield")
+                        }
+                    }
+                } header: {
+                    Text("Duress")
+                } footer: {
+                    Text("A second password that opens a decoy vault with believable fake entries instead of your real one. Use it if you are ever forced to unlock Aegis. The decoy stays on this device and is never synced; your real vault is not touched.")
+                }
+
+                Section {
+                    Toggle(isOn: autoFillBinding) {
+                        Label("AutoFill Passwords", systemImage: "key.viewfinder")
+                    }
+                    .disabled(!AutoFillCache.isAvailable)
+                } header: {
+                    Text("AutoFill")
+                } footer: {
+                    if AutoFillCache.isAvailable {
+                        Text("Lets you fill logins in Safari and other apps. Also turn on Aegis in the iOS Settings app under General › AutoFill & Passwords. AutoFill uses an encrypted copy of your vault (and keyfile, if any) kept on this device, refreshed whenever you unlock Aegis. It can't change the vault.")
+                    } else {
+                        Text("AutoFill isn't available in this install: the app was signed without an App Group. Reinstall it with SideStore or AltStore to enable it.")
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        HealthView()
+                    } label: {
+                        Label("Password Health", systemImage: "stethoscope")
+                    }
+                }
+
+                Section {
                     Button("Forget Vault", role: .destructive) {
                         confirmForget = true
                     }
@@ -97,12 +152,112 @@ struct SettingsView: View {
                 EnableBiometricView()
                     .environmentObject(store)
             }
+            .sheet(isPresented: $showDuress) {
+                DuressPasswordView()
+                    .environmentObject(store)
+            }
+            .confirmationDialog("Remove the duress password?", isPresented: $confirmRemoveDuress, titleVisibility: .visible) {
+                Button("Remove", role: .destructive) {
+                    store.removeDuressPassword()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The decoy vault on this device is deleted.")
+            }
             .confirmationDialog("Forget this vault?", isPresented: $confirmForget, titleVisibility: .visible) {
                 Button("Forget Vault", role: .destructive) {
                     dismiss()
                     store.forgetVault()
                 }
                 Button("Cancel", role: .cancel) {}
+            }
+        }
+    }
+}
+
+/// Sets or replaces the duress password.
+@MainActor
+struct DuressPasswordView: View {
+    @EnvironmentObject private var store: VaultStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var password = ""
+    @State private var confirm = ""
+    @State private var error: String?
+
+    private var canSubmit: Bool {
+        password.count >= 8 && password == confirm && !store.isBusy
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("Duress password", text: $password)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("Confirm duress password", text: $confirm)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onSubmit { save() }
+                    if !password.isEmpty && password.count < 8 {
+                        Text("Use at least 8 characters.")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    } else if !confirm.isEmpty && confirm != password {
+                        Text("Passwords do not match.")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                } footer: {
+                    Text("Entering this on the unlock screen opens a decoy vault. Pick something that is not your master password but that you would plausibly use. Setting a new one replaces the decoy with a fresh one.")
+                }
+                if let error {
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.red)
+                    }
+                }
+                if store.isBusy {
+                    Section {
+                        HStack {
+                            ProgressView()
+                            Text(store.busyMessage)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Duress Password")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        save()
+                    }
+                    .disabled(!canSubmit)
+                }
+            }
+        }
+        .interactiveDismissDisabled(store.isBusy)
+    }
+
+    private func save() {
+        guard canSubmit else { return }
+        let entered = password
+        error = nil
+        Task {
+            if await store.setDuressPassword(entered) {
+                password = ""
+                confirm = ""
+                dismiss()
+            } else {
+                error = store.errorMessage ?? "Could not set the duress password."
+                store.errorMessage = nil
             }
         }
     }

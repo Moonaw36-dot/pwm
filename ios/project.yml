@@ -21,17 +21,20 @@ targets:
       - path: Aegis
         excludes:
           - Info.plist
+          - Aegis.entitlements
+      - path: Shared
       - path: Generated/aegis_ffi.swift
     dependencies:
       # Static library XCFramework produced by the Rust build (aegis-ffi).
       - framework: Generated/AegisFFI.xcframework
         embed: false
+      - target: AegisAutoFill
     settings:
       base:
         PRODUCT_NAME: Aegis
         PRODUCT_BUNDLE_IDENTIFIER: com.moonaw.aegis
-        MARKETING_VERSION: 0.1.0
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.2.0
+        CURRENT_PROJECT_VERSION: 2
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Aegis/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -43,3 +46,35 @@ targets:
         DEVELOPMENT_TEAM: ""
         ENABLE_BITCODE: NO
     scheme: {}
+
+  # Password AutoFill. Signing is off here like for the app: build.sh embeds
+  # the entitlements with ldid so SideStore/AltStore can see what to grant.
+  AegisAutoFill:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: AutoFill
+        excludes:
+          - Info.plist
+          - AegisAutoFill.entitlements
+      - path: Shared
+      - path: Generated/aegis_ffi.swift
+    dependencies:
+      - framework: Generated/AegisFFI.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_NAME: AegisAutoFill
+        PRODUCT_BUNDLE_IDENTIFIER: com.moonaw.aegis.autofill
+        # Must match the app's, or iOS refuses to install the extension.
+        MARKETING_VERSION: 0.2.0
+        CURRENT_PROJECT_VERSION: 2
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: AutoFill/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        DEVELOPMENT_TEAM: ""
+        ENABLE_BITCODE: NO

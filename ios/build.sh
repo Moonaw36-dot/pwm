@@ -97,6 +97,20 @@ fi
 step "Packaging IPA"
 APP_PATH="${BUILD_DIR}/Build/Products/Release-iphoneos/Aegis.app"
 [[ -d "${APP_PATH}" ]] || { echo "error: ${APP_PATH} not found; see ${LOG}" >&2; exit 1; }
+APPEX_PATH="${APP_PATH}/PlugIns/AegisAutoFill.appex"
+[[ -d "${APPEX_PATH}" ]] || { echo "error: ${APPEX_PATH} not found; see ${LOG}" >&2; exit 1; }
+
+# Xcode signing is off, so nothing embedded the entitlements. Fake-sign with
+# ldid so SideStore/AltStore can read which capabilities (App Group, AutoFill)
+# to request when they re-sign with your Apple ID. Extension first, then app.
+step "Embedding entitlements with ldid"
+if ! command -v ldid >/dev/null 2>&1; then
+    brew list ldid >/dev/null 2>&1 || brew install ldid
+fi
+ldid -S"ios/AutoFill/AegisAutoFill.entitlements" "${APPEX_PATH}/AegisAutoFill"
+ldid -S"ios/Aegis/Aegis.entitlements" "${APP_PATH}/Aegis"
+ldid -e "${APP_PATH}/Aegis"
+
 mkdir -p "${IPA_DIR}/Payload"
 cp -R "${APP_PATH}" "${IPA_DIR}/Payload/"
 (cd "${IPA_DIR}" && zip -qry ../Aegis-unsigned.ipa Payload)

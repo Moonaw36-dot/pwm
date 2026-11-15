@@ -63,12 +63,25 @@ enum BiometricKeychain {
         return context.biometryType == .touchID ? "touchid" : "faceid"
     }
 
-    private static func baseQuery() -> [String: Any] {
-        [
+    /// Saved in the App Group's keychain group when the signature allows it,
+    /// so the AutoFill extension can read it too; otherwise app-only.
+    private static var accessGroups: [String?] {
+        if let group = AppGroup.identifier {
+            return [group, nil]
+        }
+        return [nil]
+    }
+
+    private static func baseQuery(group: String?) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+        if let group {
+            query[kSecAttrAccessGroup as String] = group
+        }
+        return query
     }
 
     /// Stores (or replaces) the master password. Does not prompt.
@@ -88,18 +101,26 @@ enum BiometricKeychain {
             throw KeychainError.accessControl
         }
 
-        var query = baseQuery()
-        query[kSecAttrAccessControl as String] = access
-        query[kSecValueData as String] = Data(password.utf8)
-
-        let status = SecItemAdd(query as CFDictionary, nil)
+        var status = errSecParam
+        for group in accessGroups {
+            var query = baseQuery(group: group)
+            query[kSecAttrAccessControl as String] = access
+            query[kSecValueData as String] = Data(password.utf8)
+            status = SecItemAdd(query as CFDictionary, nil)
+            // Missing entitlement: the sideloader didn't grant the group.
+            if status != errSecMissingEntitlement {
+                break
+            }
+        }
         guard status == errSecSuccess else {
             throw KeychainError.status(status)
         }
     }
 
     static func delete() {
-        _ = SecItemDelete(baseQuery() as CFDictionary)
+        for group in accessGroups {
+            _ = SecItemDelete(baseQuery(group: group) as CFDictionary)
+        }
     }
 
     /// Asks for biometrics, then reads the password. Returns nil when no
@@ -123,14 +144,22 @@ enum BiometricKeychain {
             }
         }
 
-        var query = baseQuery()
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        // Reuse the context that was just evaluated so the user is not asked twice.
-        query[kSecUseAuthenticationContext as String] = context
-
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        var status = errSecItemNotFound
+        for group in accessGroups {
+            var query = baseQuery(group: group)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            // Reuse the context that was just evaluated so the user is not asked twice.
+            query[kSecUseAuthenticationContext as String] = context
+            status = SecItemCopyMatching(query as CFDictionary, &item)
+            if status != errSecItemNotFound && status != errSecMissingEntitlement {
+                break
+            }
+        }
+        if status == errSecMissingEntitlement {
+            status = errSecItemNotFound
+        }
         switch status {
         case errSecSuccess:
             guard let data = item as? Data, let password = String(data: data, encoding: .utf8) else {

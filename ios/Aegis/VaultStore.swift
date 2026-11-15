@@ -21,6 +21,27 @@ fileprivate final class VaultHandle: @unchecked Sendable {
     }
 }
 
+fileprivate struct UnlockResult: @unchecked Sendable {
+    let handle: VaultHandle
+    let isDecoy: Bool
+    let vaultData: Data
+    let keyfile: Data?
+}
+
+enum StoreError: LocalizedError {
+    case changedOnDisk
+    case isMasterPassword
+
+    var errorDescription: String? {
+        switch self {
+        case .changedOnDisk:
+            return "The vault file was changed on another device (for example its master password). Nothing was saved. Lock and unlock to load the newer version."
+        case .isMasterPassword:
+            return "That is your master password. Choose a different duress password."
+        }
+    }
+}
+
 // MARK: - Entry conversion
 
 extension VaultEntry {
@@ -138,7 +159,8 @@ enum AegisCore {
             }
             return String(describing: error)
         }
-        if error is BiometricKeychain.KeychainError || error is VaultFile.FileError {
+        if error is BiometricKeychain.KeychainError || error is VaultFile.FileError
+            || error is StoreError {
             return error.localizedDescription
         }
         let nsError = error as NSError
@@ -160,7 +182,15 @@ final class VaultStore: ObservableObject {
     @Published private(set) var isBusy = false
     @Published private(set) var busyMessage = ""
     @Published private(set) var biometricUnlockEnabled = false
+    /// True while a decoy exists for this vault. Also true inside the decoy
+    /// itself, so its Settings look like the real vault's.
+    @Published private(set) var duressEnabled = false
+    @Published private(set) var autoFillEnabled = true
     @Published var errorMessage: String?
+
+    /// Unlocked with the duress password: every read and write goes to the
+    /// decoy, and nothing touches the real vault or the AutoFill copy.
+    private var inDecoy = false
 
     /// Last user interaction; deliberately not @Published (updated on every touch).
     private(set) var lastActivity = Date()
@@ -174,16 +204,75 @@ final class VaultStore: ObservableObject {
         static let vaultBookmark = "vaultBookmark"
         static let keyfileBookmark = "keyfileBookmark"
         static let biometric = "biometricUnlockEnabled"
+        static let vaultID = "vaultID"
+        static let autoFillDisabled = "autoFillDisabled"
     }
 
     init() {
         biometricUnlockEnabled = defaults.bool(forKey: Keys.biometric)
+        autoFillEnabled = !defaults.bool(forKey: Keys.autoFillDisabled)
         vaultURL = Self.restoreBookmark(forKey: Keys.vaultBookmark)
         keyfileURL = Self.restoreBookmark(forKey: Keys.keyfileBookmark)
         if vaultURL == nil {
             setBiometricFlag(false)
             BiometricKeychain.delete()
+            AutoFillCache.clear()
         }
+    }
+
+    // MARK: Per-vault files
+
+    /// Names this vault's decoy file. Replaced whenever another vault is picked.
+    private var vaultID: String {
+        if let id = defaults.string(forKey: Keys.vaultID) {
+            return id
+        }
+        let id = UUID().uuidString
+        defaults.set(id, forKey: Keys.vaultID)
+        return id
+    }
+
+    /// Application Support is not shown in the Files app.
+    private static var decoyDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Decoys", isDirectory: true)
+    }
+
+    private var decoyURL: URL {
+        Self.decoyDirectory.appendingPathComponent(vaultID + ".aegis", isDirectory: false)
+    }
+
+    /// The file saves go to: the decoy inside a duress session, else the vault.
+    private var activeURL: URL? {
+        inDecoy ? decoyURL : vaultURL
+    }
+
+    private static func writeDecoy(_ data: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(at: decoyDirectory, withIntermediateDirectories: true)
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutableURL = url
+        try? mutableURL.setResourceValues(values)
+    }
+
+    /// Drops everything tied to the current vault before another one replaces it.
+    private func forgetVaultFiles() {
+        try? FileManager.default.removeItem(at: decoyURL)
+        defaults.removeObject(forKey: Keys.vaultID)
+        AutoFillCache.clear()
+        duressEnabled = false
+    }
+
+    private func readKeyfile() -> Data? {
+        keyfileURL.flatMap { try? VaultFile.read($0) }
+    }
+
+    /// Gives the AutoFill extension a fresh encrypted copy of the real vault.
+    private func refreshAutoFillCache(vault: Data, keyfile: Data?) {
+        guard autoFillEnabled, !inDecoy else { return }
+        let decoy = try? Data(contentsOf: decoyURL)
+        try? AutoFillCache.store(vault: vault, keyfile: keyfile, decoy: decoy, vaultName: vaultName)
     }
 
     private static func restoreBookmark(forKey key: String) -> URL? {
@@ -239,6 +328,7 @@ final class VaultStore: ObservableObject {
                 // Stored Face ID password belonged to the previous vault.
                 disableBiometricUnlock()
             }
+            forgetVaultFiles()
             defaults.set(bookmark, forKey: Keys.vaultBookmark)
             vaultURL = url
             errorMessage = nil
@@ -267,6 +357,7 @@ final class VaultStore: ObservableObject {
     func forgetVault() {
         lock()
         disableBiometricUnlock()
+        forgetVaultFiles()
         defaults.removeObject(forKey: Keys.vaultBookmark)
         defaults.removeObject(forKey: Keys.keyfileBookmark)
         vaultURL = nil
@@ -291,19 +382,35 @@ final class VaultStore: ObservableObject {
         defer { endBusy() }
 
         let keyfileURL = self.keyfileURL
+        let decoyURL = self.decoyURL
         let generation = lockGeneration
         do {
-            let opened = try await Task.detached(priority: .userInitiated) { () throws -> VaultHandle in
+            let opened = try await Task.detached(priority: .userInitiated) { () throws -> UnlockResult in
                 let data = try VaultFile.read(url)
                 let keyfile: Data? = try keyfileURL.map { try VaultFile.read($0) }
-                let vault = try Vault.open(data: data, password: password, keyfile: keyfile)
-                return VaultHandle(vault)
+                // The real vault first, so a duress password that happens to
+                // equal the master password still opens the real vault.
+                do {
+                    let vault = try Vault.open(data: data, password: password, keyfile: keyfile)
+                    return UnlockResult(handle: VaultHandle(vault), isDecoy: false, vaultData: data, keyfile: keyfile)
+                } catch {
+                    if let decoyData = try? Data(contentsOf: decoyURL),
+                       let decoy = try? Vault.open(data: decoyData, password: password, keyfile: nil) {
+                        return UnlockResult(handle: VaultHandle(decoy), isDecoy: true, vaultData: data, keyfile: nil)
+                    }
+                    throw error
+                }
             }.value
             guard generation == lockGeneration else {
-                opened.vault.lock()
+                opened.handle.vault.lock()
                 return false
             }
-            handle = opened
+            handle = opened.handle
+            inDecoy = opened.isDecoy
+            duressEnabled = inDecoy || FileManager.default.fileExists(atPath: decoyURL.path)
+            if !inDecoy {
+                refreshAutoFillCache(vault: opened.vaultData, keyfile: opened.keyfile)
+            }
             reloadEntries()
             isUnlocked = true
             errorMessage = nil
@@ -336,6 +443,7 @@ final class VaultStore: ObservableObject {
         lockGeneration += 1
         handle?.vault.lock()
         handle = nil
+        inDecoy = false
         entries = []
         isUnlocked = false
     }
@@ -357,20 +465,22 @@ final class VaultStore: ObservableObject {
 
         let keyfileURL = self.keyfileURL
         do {
-            let created = try await Task.detached(priority: .userInitiated) { () throws -> VaultHandle in
+            let created = try await Task.detached(priority: .userInitiated) { () throws -> UnlockResult in
                 let keyfile: Data? = try keyfileURL.map { try VaultFile.read($0) }
                 let vault = try Vault.create(password: password, keyfile: keyfile)
                 let sealed = try vault.seal()
                 try VaultFile.write(sealed, to: url)
-                return VaultHandle(vault)
+                return UnlockResult(handle: VaultHandle(vault), isDecoy: false, vaultData: sealed, keyfile: keyfile)
             }.value
 
             let bookmark = try VaultFile.makeBookmark(for: url)
             lock()
             disableBiometricUnlock()
+            forgetVaultFiles()
             defaults.set(bookmark, forKey: Keys.vaultBookmark)
             vaultURL = url
-            handle = created
+            handle = created.handle
+            refreshAutoFillCache(vault: created.vaultData, keyfile: created.keyfile)
             reloadEntries()
             isUnlocked = true
             errorMessage = nil
@@ -443,21 +553,32 @@ final class VaultStore: ObservableObject {
 
     private func mutate(_ operation: (Vault) throws -> Void) -> Bool {
         guard !isBusy else { return false }
-        guard let vault = handle?.vault, let url = vaultURL else {
+        guard let vault = handle?.vault, let url = activeURL else {
             errorMessage = "The vault is locked."
             return false
         }
         noteActivity()
         do {
+            try ensureCanSave(vault, over: url)
             try operation(vault)
             let sealed = try vault.seal()
             try VaultFile.write(sealed, to: url)
+            refreshAutoFillCache(vault: sealed, keyfile: readKeyfile())
             reloadEntries()
             return true
         } catch {
             reloadEntries()
             errorMessage = AegisCore.describe(error)
             return false
+        }
+    }
+
+    /// Refuses to overwrite a file this vault's key can no longer open: the
+    /// master password was changed elsewhere and the file synced here.
+    private func ensureCanSave(_ vault: Vault, over url: URL) throws {
+        let existing = try VaultFile.read(url)
+        guard vault.canSaveOver(existing: existing) else {
+            throw StoreError.changedOnDisk
         }
     }
 
@@ -474,7 +595,7 @@ final class VaultStore: ObservableObject {
     @discardableResult
     func changePassword(current: String, new newPassword: String) async -> Bool {
         guard !isBusy else { return false }
-        guard let handle, let url = vaultURL else {
+        guard let handle, let url = activeURL else {
             errorMessage = "The vault is locked."
             return false
         }
@@ -486,14 +607,16 @@ final class VaultStore: ObservableObject {
             return false
         }
 
-        let keyfileURL = self.keyfileURL
+        let keyfileURL = inDecoy ? nil : self.keyfileURL
         do {
+            try ensureCanSave(handle.vault, over: url)
             let sealed = try await Task.detached(priority: .userInitiated) { () throws -> Data in
                 let keyfile: Data? = try keyfileURL.map { try VaultFile.read($0) }
                 try handle.vault.changePassword(newPassword: newPassword, keyfile: keyfile)
                 return try handle.vault.seal()
             }.value
             try VaultFile.write(sealed, to: url)
+            refreshAutoFillCache(vault: sealed, keyfile: readKeyfile())
         } catch {
             errorMessage = AegisCore.describe(error)
             return false
@@ -513,8 +636,8 @@ final class VaultStore: ObservableObject {
 
     /// Checks a password against the vault file on disk (slow: runs the KDF).
     private func verify(password: String) async -> Bool {
-        guard let url = vaultURL, !password.isEmpty else { return false }
-        let keyfileURL = self.keyfileURL
+        guard let url = activeURL, !password.isEmpty else { return false }
+        let keyfileURL = inDecoy ? nil : self.keyfileURL
         let result = await Task.detached(priority: .userInitiated) { () -> Bool in
             do {
                 let data = try VaultFile.read(url)
@@ -527,6 +650,62 @@ final class VaultStore: ObservableObject {
             }
         }.value
         return result
+    }
+
+    // MARK: Duress password
+
+    /// Creates (or replaces) this vault's decoy, opened by `password`.
+    @discardableResult
+    func setDuressPassword(_ password: String) async -> Bool {
+        guard !isBusy else { return false }
+        guard isUnlocked, !password.isEmpty else { return false }
+        // Inside the decoy this must look like it worked, and change nothing.
+        if inDecoy { return true }
+        beginBusy("Creating decoy vault…")
+        defer { endBusy() }
+
+        if await verify(password: password) {
+            errorMessage = AegisCore.describe(StoreError.isMasterPassword)
+            return false
+        }
+        let decoyURL = self.decoyURL
+        do {
+            let sealed = try await Task.detached(priority: .userInitiated) { () throws -> Data in
+                let decoy = try Vault.createDecoy(password: password)
+                defer { decoy.lock() }
+                return try decoy.seal()
+            }.value
+            try Self.writeDecoy(sealed, to: decoyURL)
+            if autoFillEnabled {
+                try? AutoFillCache.storeDecoy(sealed)
+            }
+            duressEnabled = true
+            return true
+        } catch {
+            errorMessage = AegisCore.describe(error)
+            return false
+        }
+    }
+
+    func removeDuressPassword() {
+        if inDecoy { return }
+        try? FileManager.default.removeItem(at: decoyURL)
+        try? AutoFillCache.storeDecoy(nil)
+        duressEnabled = false
+    }
+
+    // MARK: AutoFill
+
+    func setAutoFillEnabled(_ enabled: Bool) {
+        defaults.set(!enabled, forKey: Keys.autoFillDisabled)
+        autoFillEnabled = enabled
+        guard enabled else {
+            AutoFillCache.clear()
+            return
+        }
+        if isUnlocked, !inDecoy, let url = vaultURL, let data = try? VaultFile.read(url) {
+            refreshAutoFillCache(vault: data, keyfile: readKeyfile())
+        }
     }
 
     // MARK: Biometric unlock
