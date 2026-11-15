@@ -42,6 +42,7 @@ fn run_rows(ui: &Ui, rows: &[(&str, usize)]) {
 }
 
 #[test]
+#[ignore = "layout probe: prints geometry, asserts nothing"]
 fn probe_trash_row_geometry() {
     let mut ctx = imgui::Context::create();
     ctx.io_mut().display_size = [1024.0, 768.0];

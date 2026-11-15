@@ -23,10 +23,14 @@ All notable changes to Aegis are documented here.
   Modify dialog.
 - Automatic timestamped vault backups to a user-chosen folder, keeping the
   last 10 (best-effort).
-- Browser extension support via native messaging: a loopback IPC server with
-  a per-session token, an extension allowlist, and explicit GUI approval for
-  every password request; Chromium and Firefox manifest templates and a
-  developer test script are included.
+- Firefox extension (`extension/`, Manifest V3) with a native-messaging host
+  built into the binary (`aegis --native-host`): fills logins on HTTPS pages,
+  offers to save submitted logins, copies TOTP codes, and stores and uses
+  passkeys (ES256, "none" attestation) in the vault. Passkeys are a new
+  optional field on entries; older vaults load unchanged.
+- The GUI now re-reads the vault within a second when another process (the
+  extension host) writes to it, so its next save cannot overwrite those
+  changes.
 - Continuous integration workflow running fmt, clippy, tests, and
   cargo-audit on pushes and pull requests.
 - Unlock throttling: after three failed attempts, each further attempt waits

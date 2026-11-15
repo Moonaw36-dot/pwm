@@ -5,8 +5,9 @@ pub fn render_add_tab(ui: &imgui::Ui, state: &mut AppState) {
         ui.text("Open a file to get started.");
         return;
     }
-
+    let _bold = crate::ui::push_bold(ui, state);
     ui.text("Add passwords to your current password list.");
+    drop(_bold);
 
     if ui.button("Add new password") {
         state.modals.add_password = true;

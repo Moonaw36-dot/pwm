@@ -25,11 +25,9 @@ pub(crate) fn set_excluded_from_history(
 
     #[cfg(target_os = "windows")]
     {
-        if windows_set_clipboard_excluded(text).is_err() {
-            clipboard.set_text(text).map_err(|_| ())
-        } else {
-            Ok(())
-        }
+        // No plain set_text fallback: it would put the secret in history.
+        let _ = clipboard;
+        windows_set_clipboard_excluded(text)
     }
 
     #[cfg(target_os = "macos")]
@@ -64,11 +62,22 @@ fn windows_set_clipboard_excluded(text: &str) -> Result<(), ()> {
     };
 
     // Encode as UTF-16 with null terminator (CF_UNICODETEXT requirement)
-    let mut utf16: Vec<u16> = text.encode_utf16().collect();
+    // UTF-16 never has more units than UTF-8 has bytes, so this never reallocates.
+    let mut utf16 = zeroize::Zeroizing::new(Vec::<u16>::with_capacity(text.len() + 1));
+    utf16.extend(text.encode_utf16());
     utf16.push(0);
 
     unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 {
+        // Another process often holds the clipboard for a moment.
+        let mut opened = false;
+        for _ in 0..10 {
+            if OpenClipboard(std::ptr::null_mut()) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if !opened {
             return Err(());
         }
 

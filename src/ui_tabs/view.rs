@@ -1,13 +1,22 @@
 use crate::models::{AppState, PasswordEntry, PasswordType, is_trashed};
 use crate::theme;
+use std::cell::RefCell;
+use std::collections::HashSet;
 use totp_rs::{Algorithm, TOTP};
+use zeroize::Zeroizing;
+
+thread_local! {
+    // Hashes of TOTP secrets that failed to parse, so each is tried and
+    // logged once instead of every frame.
+    static BAD_TOTP: RefCell<HashSet<[u8; 32]>> = RefCell::new(HashSet::new());
+}
 
 const TOTP_STEP_SECS: u64 = 30;
 const URL_ERROR: &str = "Only http:// and https:// URLs can be opened from vault entries.";
 
 #[derive(Default)]
 struct EntryResponse {
-    copy: Option<(String, &'static str)>,
+    copy: Option<(Zeroizing<String>, &'static str)>,
     error: Option<String>,
 }
 
@@ -34,22 +43,6 @@ fn tags_prefix(tags: Option<&[String]>) -> String {
         .unwrap_or_default()
 }
 
-fn masked_card_number(entry: &PasswordEntry) -> String {
-    entry
-        .number
-        .as_ref()
-        .map(|number| {
-            let number = number.as_str();
-            let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
-            if digits.len() > 4 {
-                format!("**** **** **** {}", &digits[digits.len() - 4..])
-            } else {
-                digits
-            }
-        })
-        .unwrap_or_default()
-}
-
 fn render_secure_note(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
     let mut response = EntryResponse::default();
     let masked = crate::ui_tabs::health::mask_password(&entry.notes);
@@ -62,7 +55,7 @@ fn render_secure_note(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
     ));
 
     if ui.is_item_clicked() {
-        response.copy = Some((entry.notes.to_string(), "note"));
+        response.copy = Some((Zeroizing::new(entry.notes.to_string()), "note"));
     }
 
     if ui.is_item_hovered() {
@@ -87,20 +80,20 @@ fn render_card_entry(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
     ui.text(format!(
         "[CARD] {} | {} | {}",
         entry.label,
-        masked_card_number(entry),
+        crate::modals::mask_card_number(entry.number.as_ref().map(|n| n.as_str())),
         expiry
     ));
 
     if ui.is_item_clicked()
         && let Some(number) = &entry.number
     {
-        response.copy = Some((number.to_string(), "card number"));
+        response.copy = Some((Zeroizing::new(number.to_string()), "card number"));
     }
 
     if ui.is_item_clicked_with_button(imgui::MouseButton::Right)
         && let Some(cvc) = &entry.cvc
     {
-        response.copy = Some((cvc.to_string(), "CVC"));
+        response.copy = Some((Zeroizing::new(cvc.to_string()), "CVC"));
     }
 
     if ui.is_item_hovered() {
@@ -115,7 +108,7 @@ fn render_card_entry(ui: &imgui::Ui, entry: &PasswordEntry) -> EntryResponse {
     response
 }
 
-fn build_totp(secret: &str) -> Option<TOTP> {
+pub(crate) fn build_totp(secret: &str) -> Option<TOTP> {
     let secret = secret.trim();
     if secret.is_empty() {
         return None;
@@ -139,9 +132,16 @@ fn ensure_totp_cache(entry: &mut PasswordEntry) {
         return;
     };
 
+    let key = crate::app::hash_password(secret);
+    if BAD_TOTP.with(|bad| bad.borrow().contains(&key)) {
+        return;
+    }
     match build_totp(secret) {
         Some(totp) => entry.totp_cache = Some(totp),
-        None => log::error!("Failed to build TOTP for {}", entry.label),
+        None => {
+            log::error!("Failed to build TOTP for {}", entry.label);
+            BAD_TOTP.with(|bad| bad.borrow_mut().insert(key));
+        }
     }
 }
 
@@ -207,15 +207,20 @@ fn render_normal_entry(
         let totp_suffix = totp_code
             .map(|code| format!(" | TOTP: {} ({}s)", code, totp_timeout.unwrap_or("?")))
             .unwrap_or_default();
+        let passkey_suffix = match entry.passkeys.len() {
+            0 => String::new(),
+            1 => " | Passkey".to_string(),
+            count => format!(" | {count} passkeys"),
+        };
 
         let notes_part = if entry.notes.is_empty() {
             String::new()
         } else {
-            format!(" ? {}", entry.notes.as_str())
+            " ? ********".to_string()
         };
 
         ui.text(format!(
-            "{}[{}] | {}{}{}",
+            "{}[{}] | {}{}{}{}",
             tags_prefix(entry.tags.as_deref()),
             entry.label,
             if hide_user {
@@ -224,7 +229,8 @@ fn render_normal_entry(
                 entry.username.as_str()
             },
             notes_part,
-            totp_suffix
+            totp_suffix,
+            passkey_suffix
         ));
 
         if !entry.url.is_empty() {
@@ -265,13 +271,13 @@ fn render_normal_entry(
         };
 
         if ui.is_item_clicked_with_button(copy_password_button) {
-            response.copy = Some((entry.password.to_string(), "password"));
+            response.copy = Some((Zeroizing::new(entry.password.to_string()), "password"));
         } else if ui.is_item_clicked_with_button(copy_username_button) {
-            response.copy = Some((entry.username.clone(), "username"));
+            response.copy = Some((Zeroizing::new(entry.username.clone()), "username"));
         } else if ui.is_item_clicked_with_button(imgui::MouseButton::Middle)
             && let Some(code) = totp_code
         {
-            response.copy = Some((code.to_string(), "TOTP code"));
+            response.copy = Some((Zeroizing::new(code.to_string()), "TOTP code"));
         }
 
         if ui.is_item_hovered() {
@@ -288,6 +294,10 @@ fn render_normal_entry(
                     ui.text("Middle click to copy the TOTP.");
                     ui.separator();
                     ui.text("Left click to copy the password.");
+                }
+                if !entry.notes.is_empty() {
+                    ui.separator();
+                    ui.text_wrapped(entry.notes.as_str());
                 }
                 render_custom_fields(ui, entry);
             });
@@ -343,7 +353,7 @@ pub fn render_view_tab(ui: &imgui::Ui, state: &mut AppState) {
         state.search_cache = Some((search_query.clone(), indices.clone()));
         indices
     };
-    let mut pending_copy: Option<(String, &'static str)> = None;
+    let mut pending_copy: Option<(Zeroizing<String>, &'static str)> = None;
     let mut pending_error: Option<String> = None;
     let hide_user = state.hide_user;
     let invert_copy_controls = state.invert_copy_controls;

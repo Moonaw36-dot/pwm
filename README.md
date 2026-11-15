@@ -151,6 +151,33 @@ label,username,password,url,notes,tags,totp_secret,type,number,expiration_date,c
 
 Tags are exported as a semicolon-separated value and custom fields as a JSON array. CSV import accepts common header aliases such as `name`, `title`, `login`, `email`, `website`, `site`, `note`, `comment`, `tag`, `totp`, and `otp`. CSV files contain plaintext secrets and should be deleted or encrypted after use.
 
+## Browser extension (Firefox)
+
+The `extension/` folder is a Firefox extension (Manifest V3, Firefox 140 or newer; also works in LibreWolf, Floorp and Waterfox) that fills logins and stores and uses passkeys from your local vault. The browser starts `aegis --native-host` over native messaging; that process unlocks the vault itself, keeps the key in locked memory, and talks to the extension over stdio only. Nothing goes over the network.
+
+Setup:
+
+```bash
+cargo build --release
+extension/native/install-host.sh      # registers the native host; --uninstall removes it
+```
+
+Then open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `extension/manifest.json`. A permanent install needs a signed build (`web-ext sign`) or a browser that allows unsigned add-ons. Click the toolbar icon and enter your master password; the vault path defaults to the one Aegis last used, and keyfile vaults have a keyfile field under "Vault file and keyfile". The host auto-locks after the same idle timeout as the app.
+
+What it does:
+
+- **Autofill:** when a page loads and exactly one saved login matches, the username and password are filled (toggle in the popup). `Ctrl+Shift+L` fills on demand; the popup lists every match with **Fill** and **Code** (copies the TOTP).
+- **Save logins:** submitting a login form puts a `+` badge on the toolbar icon; the popup then offers to save the login or update the changed password.
+- **Passkeys:** sites that ask to create or use a passkey open a small Aegis window. Creating one stores it on the matching login entry (or a new entry), shown as "Passkey" in the View tab. **Use another method** hands the request back to the browser, so security keys keep working.
+
+Safeguards and limits:
+
+- Credentials are only offered on HTTPS pages (and `localhost`) whose host equals, or is a subdomain of, the host saved on the entry. Forms that post to an unrelated site are never filled, and only the top-level frame is filled.
+- Passkeys use ES256 with "none" attestation and a signature counter of 0, like synced passkeys. The private key is stored in the encrypted vault and signs inside the host process; the extension never sees it. Passkeys are not included in CSV export.
+- Not supported: conditional-UI passkey suggestions in username fields, passkeys inside cross-origin iframes, and sites that accept only non-ES256 algorithms (those requests go to the browser).
+- The duress password works through the extension and opens the decoy vault. Unlock attempts use the same backoff as the app.
+- The app and the host share the vault file. The app reloads it within a second of an extension write; closing the app first is not required.
+
 ## Controls
 
 | Action | Input |
@@ -214,7 +241,7 @@ The config currently stores the auto-lock timeout, known keyfile hashes by vault
 - Aegis has not been formally security-audited.
 - There is no master-password recovery. If you forget the master password, the vault cannot be decrypted.
 - If you add a keyfile, losing the keyfile can make the vault unrecoverable.
-- There is no built-in sync or autofill integration.
+- There is no built-in sync. Autofill and passkeys are only available through the Firefox extension.
 - While unlocked, the derived key is kept in page-locked memory (`mlock`/`VirtualLock`) so it is not swapped to disk. Locking is best-effort: if the OS refuses (for example a low `RLIMIT_MEMLOCK`), the key still stays in ordinary memory and is still wiped on lock.
 - After several failed unlock attempts, further attempts are delayed with an increasing backoff (up to 64 seconds). This is an in-app speed bump: it resets when the app restarts and does not protect the vault file from offline attacks — Argon2id remains the real defense there.
 - CSV export is plaintext. Treat exported files as sensitive and delete or encrypt them after use.

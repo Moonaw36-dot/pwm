@@ -5,6 +5,11 @@ use crate::theme;
 pub fn confirm_delete_modal(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
 
+    if state.delete_idx.is_none() {
+        ui.close_current_popup();
+        return;
+    }
+
     ui.text("Are you sure you want to delete the password?");
     ui.text("It will be moved to the trash.");
     if ui.button("Yes") {

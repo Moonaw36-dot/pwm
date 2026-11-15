@@ -1,8 +1,9 @@
 use crate::app::AppState;
 use crate::modals::add_entry_from_inputs;
 
-const STANDARD_CARD_LEN: usize = 16;
 const AMEX_CARD_LEN: usize = 15;
+const MIN_CARD_LEN: usize = 13;
+const MAX_CARD_LEN: usize = 19;
 
 pub const STANDARD_CVC_LEN: usize = 3;
 pub const AMEX_CVC_LEN: usize = 4;
@@ -100,7 +101,7 @@ pub(crate) fn validate_card_fields(
         return Err("Card details are required");
     }
 
-    let valid_length = number.len() == STANDARD_CARD_LEN || number.len() == AMEX_CARD_LEN;
+    let valid_length = (MIN_CARD_LEN..=MAX_CARD_LEN).contains(&number.len());
 
     if !valid_length || !luhn_check(number) {
         return Err("Invalid card number");

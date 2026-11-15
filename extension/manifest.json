@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Aegis",
+  "version": "0.1.0",
+  "description": "Autofill logins and passkeys from your local Aegis vault.",
+  "icons": { "48": "icons/aegis.svg", "96": "icons/aegis.svg" },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "aegis@pwm.local",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "permissions": ["nativeMessaging", "storage", "clipboardWrite", "clipboardRead"],
+  "host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "scripts": ["webauthn.js", "background.js"] },
+  "action": {
+    "default_title": "Aegis",
+    "default_popup": "popup.html",
+    "default_icon": { "48": "icons/aegis.svg" }
+  },
+  "commands": {
+    "fill-login": {
+      "suggested_key": { "default": "Ctrl+Shift+L" },
+      "description": "Fill the saved login on this page"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["webauthn-page.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

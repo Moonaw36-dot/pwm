@@ -8,6 +8,7 @@ mod input;
 mod locked_buf;
 mod modals;
 mod models;
+mod native_host;
 mod strength;
 mod texture;
 mod theme;
@@ -92,8 +93,49 @@ fn report_startup_error(context: &str, err: impl std::fmt::Debug) {
     }
 }
 
+/// No core dumps or ptrace-style memory reads of an unlocked vault.
+#[cfg(unix)]
+fn harden_process() {
+    let limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: plain syscalls with valid arguments.
+    unsafe {
+        if libc::setrlimit(libc::RLIMIT_CORE, &limit) != 0 {
+            log::warn!("could not disable core dumps");
+        }
+        #[cfg(target_os = "linux")]
+        if libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) != 0 {
+            log::warn!("could not clear the dumpable flag");
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn harden_process() {}
+
+/// Best effort: a panic must not leave a copied secret on the clipboard.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = crate::clipboard::set_excluded_from_history(&mut clipboard, "");
+        }
+        previous(info);
+    }));
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    harden_process();
+    install_panic_hook();
+
+    // Browsers launch the native-messaging host through the extension's
+    // wrapper script; it never needs a window or graphics libraries.
+    if std::env::args().any(|arg| arg == "--native-host") {
+        std::process::exit(native_host::run());
+    }
 
     let event_loop = match EventLoop::new() {
         Ok(event_loop) => event_loop,
@@ -200,16 +242,26 @@ fn main() {
 
     let hidpi = platform.hidpi_factor();
     let font_size = (theme::FONT_SIZE_PT as f64 * hidpi) as f32;
-    imgui_ctx.fonts().add_font(&[imgui::FontSource::TtfData {
-        data: include_bytes!("../assets/Inter_24pt-Regular.ttf"),
+    // First registered font becomes the default; the bold face is selected
+    // per-widget via ui::push_bold. All fonts must be added before the
+    // renderer initializes, since it bakes the atlas texture at startup.
+    let font_config = || imgui::FontConfig {
+        oversample_h: 3,
+        oversample_v: 2,
+        pixel_snap_h: false,
+        font_builder_flags: 8,
+        ..Default::default()
+    };
+    let _regular_font = imgui_ctx.fonts().add_font(&[imgui::FontSource::TtfData {
+        data: include_bytes!("../assets/Inter_24pt-Medium.ttf"),
         size_pixels: font_size,
-        config: Some(imgui::FontConfig {
-            oversample_h: 2,
-            oversample_v: 2,
-            pixel_snap_h: true,
-            ..Default::default()
-        }),
+        config: Some(font_config()),
     }]);
+    state.font_bold = Some(imgui_ctx.fonts().add_font(&[imgui::FontSource::TtfData {
+        data: include_bytes!("../assets/Inter_24pt-Bold.ttf"),
+        size_pixels: font_size,
+        config: Some(font_config()),
+    }]));
     imgui_ctx.io_mut().font_global_scale = (1.0 / hidpi) as f32;
 
     let mut renderer = match imgui_glow_renderer::AutoRenderer::initialize(gl, &mut imgui_ctx) {
@@ -227,158 +279,264 @@ fn main() {
         include_bytes!("../assets/icons8-magnetic-card-48.png"),
     );
 
+    let frame_debug = app::frame_debug();
     let mut last_frame = std::time::Instant::now();
+    let app_start = std::time::Instant::now();
     let mut next_tick = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let mut queued_frames = 0u8;
     state.card_texture = card_texture;
     theme::apply(imgui_ctx.style_mut(), state.light_mode);
     let mut applied_light_mode = state.light_mode;
 
-    event_loop
-        .run(move |event, target| {
-            if let Event::WindowEvent {
-                event: WindowEvent::KeyboardInput { ref event, .. },
-                ..
-            } = event
+    if let Err(err) = event_loop.run(move |event, target| {
+        if let Event::WindowEvent {
+            event: WindowEvent::KeyboardInput { ref event, .. },
+            ..
+        } = event
+        {
+            let pressed = event.state == winit::event::ElementState::Pressed;
+            if frame_debug {
+                eprintln!("[key] t={:?} pressed={pressed}", app_start.elapsed());
+            }
+            let key = event.key_without_modifiers();
+            let ctrl_held = imgui_ctx.io().key_ctrl;
+            let io = imgui_ctx.io_mut();
+
+            if pressed
+                && !ctrl_held
+                && let Some(txt) = &event.text
             {
-                let pressed = event.state == winit::event::ElementState::Pressed;
-                let key = event.key_without_modifiers();
-                let ctrl_held = imgui_ctx.io().key_ctrl;
-                let io = imgui_ctx.io_mut();
-
-                if pressed
-                    && !ctrl_held
-                    && let Some(txt) = &event.text
-                {
-                    for ch in txt.chars() {
-                        if ch != '\u{7f}' {
-                            io.add_input_character(ch);
-                        }
+                for ch in txt.chars() {
+                    if ch != '\u{7f}' {
+                        io.add_input_character(ch);
                     }
                 }
-
-                match key.as_ref() {
-                    WinitKey::Named(NamedKey::Shift) => {
-                        io.add_key_event(imgui::Key::ModShift, pressed)
-                    }
-                    WinitKey::Named(NamedKey::Control) => {
-                        io.add_key_event(imgui::Key::ModCtrl, pressed)
-                    }
-                    WinitKey::Named(NamedKey::Alt) => io.add_key_event(imgui::Key::ModAlt, pressed),
-                    WinitKey::Named(NamedKey::Super) => {
-                        io.add_key_event(imgui::Key::ModSuper, pressed)
-                    }
-                    _ => {}
-                }
-
-                if let Some(imgui_key) = input::to_imgui_key(key, event.location) {
-                    io.add_key_event(imgui_key, pressed);
-                }
-            } else {
-                platform.handle_event(imgui_ctx.io_mut(), &window, &event);
             }
 
-            if matches!(
-                event,
-                Event::WindowEvent {
-                    event: WindowEvent::KeyboardInput { .. }
-                        | WindowEvent::Ime { .. }
-                        | WindowEvent::MouseInput { .. }
-                        | WindowEvent::CursorMoved { .. }
-                        | WindowEvent::MouseWheel { .. }
-                        | WindowEvent::Resized { .. },
-                    ..
+            match key.as_ref() {
+                WinitKey::Named(NamedKey::Shift) => io.add_key_event(imgui::Key::ModShift, pressed),
+                WinitKey::Named(NamedKey::Control) => {
+                    io.add_key_event(imgui::Key::ModCtrl, pressed)
                 }
-            ) {
-                state.vault.last_activity = std::time::Instant::now();
-                window.request_redraw();
+                WinitKey::Named(NamedKey::Alt) => io.add_key_event(imgui::Key::ModAlt, pressed),
+                WinitKey::Named(NamedKey::Super) => io.add_key_event(imgui::Key::ModSuper, pressed),
+                _ => {}
             }
 
-            match event {
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(new_size),
-                    ..
-                } if new_size.width > 0 && new_size.height > 0 => {
-                    gl_surface.resize(
-                        &gl_context,
-                        NonZeroU32::new(new_size.width).unwrap(),
-                        NonZeroU32::new(new_size.height).unwrap(),
-                    );
+            if let Some(imgui_key) = input::to_imgui_key(key, event.location) {
+                io.add_key_event(imgui_key, pressed);
+            }
+        } else {
+            platform.handle_event(imgui_ctx.io_mut(), &window, &event);
+        }
 
-                    unsafe {
-                        renderer.gl_context().viewport(
-                            0,
-                            0,
-                            new_size.width as i32,
-                            new_size.height as i32,
-                        );
-                    }
+        // Bare cursor movement redraws but does not hold off auto-lock.
+        if let Event::WindowEvent { event: ref win, .. } = event {
+            match win {
+                WindowEvent::KeyboardInput { .. }
+                | WindowEvent::Ime { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. } => {
+                    state.vault.touch();
+                    queued_frames = 3;
+                    window.request_redraw();
                 }
-                Event::NewEvents(_) => {
-                    imgui_ctx.io_mut().update_delta_time(last_frame.elapsed());
-                    last_frame = std::time::Instant::now();
-                }
-                Event::AboutToWait => {
-                    // Redraws are driven by input events, plus this one-second
-                    // tick that keeps timers running while idle (TOTP
-                    // countdown, auto-lock, clipboard auto-clear). Requesting
-                    // unconditionally would redraw at full speed forever.
-                    target.set_control_flow(ControlFlow::WaitUntil(
-                        std::time::Instant::now() + std::time::Duration::from_secs(1),
-                    ));
-                    if std::time::Instant::now() >= next_tick {
-                        next_tick = std::time::Instant::now() + std::time::Duration::from_secs(1);
-                        window.request_redraw();
-                    }
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::RedrawRequested,
-                    ..
-                } => {
-                    if state.light_mode != applied_light_mode {
-                        theme::apply(imgui_ctx.style_mut(), state.light_mode);
-                        applied_light_mode = state.light_mode;
-                    }
-                    platform.prepare_frame(imgui_ctx.io_mut(), &window).unwrap();
-                    let ui = imgui_ctx.frame();
-
-                    build_ui(ui, &mut state);
-
-                    if state.should_exit {
-                        state.close_file();
-                        target.exit();
-                    }
-
-                    platform.prepare_render(ui, &window);
-                    let draw_data = imgui_ctx.render();
-
-                    unsafe {
-                        let gl = renderer.gl_context();
-                        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-                        let [r, g, b, a] = theme::clear_color(state.light_mode);
-                        gl.clear_color(r, g, b, a);
-                        gl.clear(glow::COLOR_BUFFER_BIT);
-                    }
-
-                    renderer.render(draw_data).unwrap();
-
-                    unsafe {
-                        renderer
-                            .gl_context()
-                            .bind_framebuffer(glow::FRAMEBUFFER, None);
-                    }
-
-                    gl_surface.swap_buffers(&gl_context).unwrap();
-                }
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    // Wipe any copied secret from the clipboard before exiting.
-                    state.close_file();
-                    target.exit();
+                WindowEvent::CursorMoved { .. } | WindowEvent::Resized { .. } => {
+                    window.request_redraw();
                 }
                 _ => {}
             }
-        })
-        .unwrap();
+        }
+
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::Resized(new_size),
+                ..
+            } if new_size.width > 0 && new_size.height > 0 => {
+                gl_surface.resize(
+                    &gl_context,
+                    NonZeroU32::new(new_size.width).unwrap(),
+                    NonZeroU32::new(new_size.height).unwrap(),
+                );
+
+                unsafe {
+                    renderer.gl_context().viewport(
+                        0,
+                        0,
+                        new_size.width as i32,
+                        new_size.height as i32,
+                    );
+                }
+            }
+            Event::NewEvents(_) => {
+                imgui_ctx.io_mut().update_delta_time(last_frame.elapsed());
+                last_frame = std::time::Instant::now();
+            }
+            Event::AboutToWait => {
+                // Redraws are driven by input events, plus this one-second
+                // tick that keeps timers running while idle (TOTP
+                // countdown, auto-lock, clipboard auto-clear). Requesting
+                // unconditionally would redraw at full speed forever.
+                target.set_control_flow(ControlFlow::WaitUntil(
+                    std::time::Instant::now() + std::time::Duration::from_secs(1),
+                ));
+                if std::time::Instant::now() >= next_tick {
+                    next_tick = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                    window.request_redraw();
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::RedrawRequested,
+                ..
+            } => {
+                let t0 = std::time::Instant::now();
+
+                if state.light_mode != applied_light_mode {
+                    theme::apply(imgui_ctx.style_mut(), state.light_mode);
+                    applied_light_mode = state.light_mode;
+                }
+                if let Err(err) = platform.prepare_frame(imgui_ctx.io_mut(), &window) {
+                    log::error!("prepare_frame failed, skipping frame: {err}");
+                    return;
+                }
+                state.lock_if_idle();
+                let ui = imgui_ctx.frame();
+
+                build_ui(ui, &mut state);
+
+                if state.should_exit {
+                    state.close_file();
+                    target.exit();
+                }
+
+                platform.prepare_render(ui, &window);
+                let draw_data = imgui_ctx.render();
+                let t1 = std::time::Instant::now();
+
+                unsafe {
+                    let gl = renderer.gl_context();
+                    gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                    let [r, g, b, a] = theme::clear_color(state.light_mode);
+                    gl.clear_color(r, g, b, a);
+                    gl.clear(glow::COLOR_BUFFER_BIT);
+                }
+
+                if let Err(err) = renderer.render(draw_data) {
+                    log::error!("render failed, skipping frame: {err}");
+                    return;
+                }
+                let t2 = std::time::Instant::now();
+
+                unsafe {
+                    renderer
+                        .gl_context()
+                        .bind_framebuffer(glow::FRAMEBUFFER, None);
+                }
+
+                if let Err(err) = gl_surface.swap_buffers(&gl_context) {
+                    log::error!("swap_buffers failed, exiting: {err}");
+                    state.close_file();
+                    target.exit();
+                    return;
+                }
+
+                // imgui trickles queued key events one per frame and winit
+                // merges redraw requests, so a quick press+release would sit
+                // until the next event without these extra frames.
+                if queued_frames > 0 {
+                    queued_frames -= 1;
+                    window.request_redraw();
+                }
+
+                if frame_debug {
+                    eprintln!(
+                        "[frame] ui={:?} submit={:?} swap={:?} total={:?} since_last={:?}",
+                        t1 - t0,
+                        t2 - t1,
+                        t0.elapsed() - (t2 - t0),
+                        t0.elapsed(),
+                        t0 - last_frame,
+                    );
+                }
+            }
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                // Wipe any copied secret from the clipboard before exiting.
+                state.close_file();
+                target.exit();
+            }
+            _ => {}
+        }
+    }) {
+        log::error!("event loop failed: {err}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod perf_probe {
+    use super::*;
+
+    /// Headless frame-cost probe: times the exact CPU work a keystroke
+    /// triggers (imgui frame + build_ui + draw-data generation) against a
+    /// synthetic vault of N entries in the View tab. Run with:
+    ///   cargo test --release perf_probe -- --ignored --nocapture
+    #[test]
+    #[ignore = "manual perf probe"]
+    fn view_tab_frame_cost_scales_with_entries() {
+        let mut ctx = imgui::Context::create();
+        ctx.set_ini_filename(None);
+        ctx.fonts().add_font(&[imgui::FontSource::TtfData {
+            data: include_bytes!("../assets/Inter_24pt-Medium.ttf"),
+            size_pixels: 24.0,
+            config: Some(imgui::FontConfig::default()),
+        }]);
+        ctx.fonts().build_rgba32_texture();
+        ctx.io_mut().display_size = [1400.0, 900.0];
+
+        for entries in [0usize, 100, 1000, 5000, 20000] {
+            let mut state = app::AppState::new();
+            state.vault.store = Some(app::PasswordList {
+                entries: (0..entries)
+                    .map(|i| app::PasswordEntry {
+                        label: format!("Entry number {i} with a reasonably long label"),
+                        username: format!("user{i}@example.org"),
+                        url: "https://www.example.org/some/path".into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+
+            // Idle frame cost (query unchanged, search cache warm)
+            let mut worst_idle = std::time::Duration::ZERO;
+            for _ in 0..10 {
+                let t = std::time::Instant::now();
+                let ui = ctx.frame();
+                ui::build_ui(ui, &mut state);
+                let dd = ctx.render();
+                std::hint::black_box(&dd);
+                worst_idle = worst_idle.max(t.elapsed());
+            }
+
+            // Keystroke frames: query changes each frame = search cache miss
+            state.search = "aaaaaaaaaaaaaaaaaaaa".into();
+            let mut worst_stroke = std::time::Duration::ZERO;
+            for n in 0..20usize {
+                state.search.pop();
+                state.search.push((b'a' + (n % 26) as u8) as char);
+                state.search_cache = None; // a keystroke invalidates the cache
+                let t = std::time::Instant::now();
+                let ui = ctx.frame();
+                ui::build_ui(ui, &mut state);
+                let dd = ctx.render();
+                std::hint::black_box(&dd);
+                worst_stroke = worst_stroke.max(t.elapsed());
+            }
+            println!(
+                "entries={entries:>6}  idle_frame={worst_idle:>10.1?}  keystroke_frame={worst_stroke:>10.1?}"
+            );
+        }
+    }
 }

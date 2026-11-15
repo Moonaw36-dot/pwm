@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Aegis</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <header>
+    <h1><img src="icons/aegis.svg" alt="">Aegis</h1>
+    <button id="lock" class="link" hidden>Lock</button>
+  </header>
+
+  <section id="missing" hidden>
+    <p><b>The Aegis native host was not found.</b></p>
+    <p class="muted">Build Aegis, then register the host once from the project folder:</p>
+    <p><code>extension/native/install-host.sh</code></p>
+    <p class="muted">Restart the browser afterwards. Details: <span id="missing-detail"></span></p>
+  </section>
+
+  <section id="locked" hidden>
+    <p class="muted" id="vault-line"></p>
+    <form id="unlock-form">
+      <label for="password">Master password</label>
+      <input id="password" type="password" autocomplete="off" autofocus>
+      <details id="advanced">
+        <summary>Vault file and keyfile</summary>
+        <label for="path">Vault path</label>
+        <input id="path" type="text" autocomplete="off" spellcheck="false">
+        <label for="keyfile">Keyfile path (if the vault uses one)</label>
+        <input id="keyfile" type="text" autocomplete="off" spellcheck="false">
+      </details>
+      <button class="primary wide" type="submit">Unlock</button>
+    </form>
+  </section>
+
+  <section id="unlocked" hidden>
+    <div id="pending" class="banner" hidden>
+      <div id="pending-text"></div>
+      <div class="actions">
+        <button id="pending-save" class="primary">Save</button>
+        <button id="pending-dismiss">Not now</button>
+      </div>
+    </div>
+    <p class="muted" id="site-line"></p>
+    <div id="matches"></div>
+    <footer>
+      <label><input id="autofill" type="checkbox"> Autofill on page load</label>
+    </footer>
+  </section>
+
+  <p id="message" class="error" role="status"></p>
+  <script src="popup.js"></script>
+</body>
+</html>

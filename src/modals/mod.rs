@@ -29,7 +29,7 @@ use crate::app::{AppState, PasswordEntry};
 use crate::models::{EntryForm, PasswordType, is_trashed};
 use crate::strength::{StrengthResult, get_card_issuer};
 use crate::theme;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 pub(crate) fn render_strength_bar(ui: &imgui::Ui, (score, label, color): StrengthResult) {
     let fraction = (score + 1) as f32 / 5.0;
@@ -51,26 +51,44 @@ pub(crate) fn render_strength_bar(ui: &imgui::Ui, (score, label, color): Strengt
         .add_text([text_x, text_y], [1.0, 1.0, 1.0, 1.0], label);
 }
 
+/// Take the form's custom fields, dropping blank-named ones and wiping
+/// their values.
+pub(crate) fn take_custom_fields(
+    fields: &mut Zeroizing<Vec<(String, String)>>,
+) -> Vec<(String, String)> {
+    let (keep, dropped): (Vec<_>, Vec<_>) = std::mem::take(&mut **fields)
+        .into_iter()
+        .partition(|(name, _)| !name.trim().is_empty());
+    for (_, mut value) in dropped {
+        value.zeroize();
+    }
+    keep
+}
+
 fn add_entry_from_inputs(state: &mut AppState) {
+    let is_note = state.form.is_secure_note;
+    let username = std::mem::take(&mut state.form.username);
+    let password = std::mem::replace(&mut state.form.password, Zeroizing::new(String::new()));
+    let totp = std::mem::replace(&mut state.form.totp, Zeroizing::new(String::new()));
     let entry = PasswordEntry {
         label: std::mem::take(&mut state.form.label),
-        username: std::mem::take(&mut state.form.username),
-        password: std::mem::replace(&mut state.form.password, Zeroizing::new(String::new())),
+        username: if is_note { String::new() } else { username },
+        password: if is_note {
+            Zeroizing::new(String::new())
+        } else {
+            password
+        },
         notes: std::mem::replace(&mut state.form.notes, Zeroizing::new(String::new())),
         url: std::mem::take(&mut state.form.url),
-        totp_secret: crate::modals::modify_entry::sanitize_totp(std::mem::replace(
-            &mut state.form.totp,
-            Zeroizing::new(String::new()),
-        ))
+        totp_secret: if is_note {
+            None
+        } else {
+            crate::modals::modify_entry::sanitize_totp(totp)
+        }
         .into(),
         tags: crate::modals::modify_entry::parse_tags(state.form.tag.clone()),
-        custom_fields: Zeroizing::new(
-            std::mem::take(&mut *state.form.custom_fields)
-                .into_iter()
-                .filter(|(k, _)| !k.trim().is_empty())
-                .collect::<Vec<_>>(),
-        ),
-        is_secure_note: state.form.is_secure_note,
+        custom_fields: Zeroizing::new(take_custom_fields(&mut state.form.custom_fields)),
+        is_secure_note: is_note,
         created_at: Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -89,6 +107,7 @@ fn add_entry_from_inputs(state: &mut AppState) {
         favorite: None,
         trashed_at: None,
         password_history: Vec::new(),
+        passkeys: Vec::new(),
         totp_code_cache: None,
     };
 
@@ -106,7 +125,7 @@ pub(crate) fn render_card_fields(ui: &imgui::Ui, state: &mut AppState) {
         .chars_decimal(true)
         .build()
     {
-        state.form.number.truncate(16);
+        state.form.number.truncate(19);
     }
 
     let card = state.form.number.as_str();
@@ -165,6 +184,7 @@ pub(crate) fn render_custom_fields_editor(
         ui.same_line();
         ui.set_next_item_width(theme::CUSTOM_FIELD_VALUE_WIDTH);
         ui.input_text(format!("##{id_prefix}_field_value_{i}"), val)
+            .password(true)
             .build();
         ui.same_line();
         if ui.button(format!("x##{id_prefix}_field_remove_{i}")) {
@@ -172,7 +192,7 @@ pub(crate) fn render_custom_fields_editor(
         }
     }
     if let Some(i) = remove_idx {
-        fields.remove(i);
+        fields.remove(i).1.zeroize();
     }
 }
 
@@ -210,9 +230,11 @@ pub(crate) fn copy_entry_to_form(
     }
 }
 
-fn mask_card_number(number: Option<&String>) -> String {
+/// Card number with all but the last four digits hidden; empty when the
+/// card has no number.
+pub(crate) fn mask_card_number(number: Option<&str>) -> String {
     let Some(number) = number else {
-        return "[CARD]".to_string();
+        return String::new();
     };
     let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() > 4 {
@@ -247,11 +269,9 @@ pub(crate) fn render_entries_list(
                 } else {
                     entry.label.as_str()
                 };
-                ui.text(format!(
-                    "{} - {}",
-                    label,
-                    mask_card_number(entry.number.as_deref())
-                ));
+                let masked = mask_card_number(entry.number.as_ref().map(|n| n.as_str()));
+                let masked = if masked.is_empty() { "[CARD]" } else { &masked };
+                ui.text(format!("{label} - {masked}"));
                 ui.same_line();
             } else if entry.password_type == PasswordType::Normal
                 || entry.password_type == PasswordType::WiFi

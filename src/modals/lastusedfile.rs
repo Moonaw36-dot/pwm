@@ -20,6 +20,9 @@ pub fn use_lastused_file(ui: &imgui::Ui, state: &mut AppState) {
         ui.close_current_popup();
         state.modals.master = true;
     }
+
+    ui.same_line();
+
     if ui.button("No") {
         ui.close_current_popup();
     }

@@ -2,9 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-BINARY="$ROOT_DIR/target/release/aegis"
+RELEASE="$ROOT_DIR/target/release/aegis"
+DEBUG="$ROOT_DIR/target/debug/aegis"
 
-if [[ ! -x "$BINARY" ]]; then
+# Prefer whichever build is newer; the release build is much faster.
+if [[ -x "$RELEASE" && ( ! -x "$DEBUG" || "$RELEASE" -nt "$DEBUG" ) ]]; then
+    BINARY="$RELEASE"
+elif [[ -x "$DEBUG" ]]; then
+    BINARY="$DEBUG"
+else
     printf 'Aegis is not built. Run: cargo build --release\n' >&2
     exit 1
 fi

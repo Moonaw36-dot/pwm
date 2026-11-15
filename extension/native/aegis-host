@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Entry point the browser launches for native messaging. Firefox passes the
+# manifest path and extension id as arguments; the host needs neither.
+# Override the binary with AEGIS_BIN.
+set -euo pipefail
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/../.." && pwd)"
+
+for bin in "${AEGIS_BIN:-}" "$ROOT/target/release/aegis" "$ROOT/target/debug/aegis"; do
+    if [[ -n "$bin" && -x "$bin" ]]; then
+        exec "$bin" --native-host
+    fi
+done
+
+printf 'aegis native host: no built binary found under %s/target (run: cargo build --release)\n' "$ROOT" >&2
+exit 1

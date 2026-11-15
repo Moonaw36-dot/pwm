@@ -166,7 +166,9 @@ unsafe fn unlock(ptr: *mut u8, len: usize) {
 #[cfg(windows)]
 unsafe fn unlock(ptr: *mut u8, len: usize) {
     use windows_sys::Win32::System::Memory::VirtualUnlock;
-    VirtualUnlock(ptr, len);
+    unsafe {
+        VirtualUnlock(ptr, len);
+    }
 }
 
 #[cfg(unix)]
@@ -179,7 +181,9 @@ unsafe fn free(ptr: *mut u8, len: usize) {
 #[cfg(windows)]
 unsafe fn free(ptr: *mut u8, _len: usize) {
     use windows_sys::Win32::System::Memory::{MEM_RELEASE, VirtualFree};
-    VirtualFree(ptr, 0, MEM_RELEASE);
+    unsafe {
+        VirtualFree(ptr, 0, MEM_RELEASE);
+    }
 }
 
 #[cfg(test)]

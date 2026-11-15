@@ -49,29 +49,40 @@ pub fn get_card_issuer(card: &str) -> String {
 pub type StrengthResult = (u8, &'static str, [f32; 4]);
 
 pub fn haveibeenpwned(password: &str) -> Result<bool, String> {
-    let hash: String = Sha1::digest(password.as_bytes())
-        .iter()
-        .map(|b| format!("{:02X}", b))
-        .collect();
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut digest = zeroize::Zeroizing::new([0u8; 20]);
+    digest.copy_from_slice(&Sha1::digest(password.as_bytes()));
+    let mut hash = zeroize::Zeroizing::new(String::with_capacity(40));
+    for b in digest.iter() {
+        hash.push(HEX[usize::from(b >> 4)] as char);
+        hash.push(HEX[usize::from(b & 15)] as char);
+    }
     let (prefix, suffix) = hash.split_at(5);
 
     let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
     let config = ureq::Agent::config_builder()
+        .https_only(true)
         .timeout_connect(Some(Duration::from_secs(5)))
         .timeout_per_call(Some(Duration::from_secs(10)))
         .build();
     let agent = ureq::Agent::new_with_config(config);
     let body = agent
         .get(&url)
+        .header("Add-Padding", "true")
         .call()
         .map_err(|e| format!("HIBP request failed: {e}"))?
         .body_mut()
+        .with_config()
+        .limit(1024 * 1024)
         .read_to_string()
         .map_err(|e| format!("HIBP response read failed: {e}"))?;
+    // Padded responses carry fake rows with a zero count.
     Ok(body.lines().any(|line: &str| {
-        line.split(':')
+        let mut parts = line.trim().split(':');
+        parts
             .next()
             .is_some_and(|s: &str| s.eq_ignore_ascii_case(suffix))
+            && parts.next().is_some_and(|count| count.trim() != "0")
     }))
 }
 
@@ -176,6 +187,21 @@ fn score_to_strength(score: u8) -> StrengthResult {
     }
 }
 
+/// Longest prefix, in characters, that the live strength meter scores.
+/// zxcvbn's cost grows steeply and unevenly with length (a single 100-char
+/// password can take hundreds of milliseconds in a debug build), and the meter
+/// re-scores on every keystroke. A prefix never scores higher than the whole
+/// password, and 64 random characters already rate "Very Strong".
+const LIVE_STRENGTH_MAX_CHARS: usize = 64;
+
+/// `manual_strength` for interactive use: bounds the work done per keystroke.
+pub fn live_strength(password: &str) -> StrengthResult {
+    match password.char_indices().nth(LIVE_STRENGTH_MAX_CHARS) {
+        Some((end, _)) => manual_strength(&password[..end]),
+        None => manual_strength(password),
+    }
+}
+
 pub fn manual_strength(password: &str) -> StrengthResult {
     if password.is_empty() {
         return (0, "—", [0.45, 0.45, 0.45, 1.0]);
@@ -263,6 +289,42 @@ mod tests {
     fn test_verify_mixed_passphrase_with_caps_is_treated_as_password() {
         let issues = verify_password("Correct horse battery staple");
         assert!(!issues.contains(&PasswordSafety::TooFewWords));
+    }
+
+    // ---- live_strength ----
+
+    #[test]
+    fn test_live_strength_matches_manual_for_normal_lengths() {
+        for pw in [
+            "",
+            "abc",
+            "password",
+            "qW7#mZx2$vLp9&nR4!kDf8",
+            &"x9$".repeat(21),
+        ] {
+            assert_eq!(live_strength(pw).0, manual_strength(pw).0, "{pw}");
+        }
+    }
+
+    #[test]
+    fn test_live_strength_only_scores_a_bounded_prefix() {
+        // Everything past the cap is ignored, so a weak prefix stays weak.
+        let weak_prefix = format!(
+            "{}{}",
+            "a".repeat(LIVE_STRENGTH_MAX_CHARS),
+            "qW7#mZx2$vLp9&nR4!kDf8"
+        );
+        assert_eq!(
+            live_strength(&weak_prefix),
+            live_strength(&"a".repeat(LIVE_STRENGTH_MAX_CHARS))
+        );
+        assert_eq!(live_strength(&weak_prefix).0, 0);
+    }
+
+    #[test]
+    fn test_live_strength_cuts_on_char_boundaries() {
+        let unicode = "é".repeat(LIVE_STRENGTH_MAX_CHARS * 2);
+        let _ = live_strength(&unicode); // must not panic mid-codepoint
     }
 
     // ---- manual_strength ----

@@ -1,6 +1,6 @@
 pub const WINDOW_WIDTH: f32 = 1024.0;
 pub const WINDOW_HEIGHT: f32 = 768.0;
-pub const FONT_SIZE_PT: f32 = 15.0;
+pub const FONT_SIZE_PT: f32 = 16.0;
 
 pub const MODAL_WIDTH_STANDARD: f32 = 400.0;
 pub const MODAL_WIDTH_GENERATOR: f32 = 440.0;
@@ -9,24 +9,28 @@ pub const MODAL_WIDTH_SETTINGS: f32 = 300.0;
 pub const CUSTOM_FIELD_NAME_WIDTH: f32 = 150.0;
 pub const CUSTOM_FIELD_VALUE_WIDTH: f32 = 180.0;
 
-pub const SUCCESS_COLOR: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+pub const SUCCESS_COLOR: [f32; 4] = [0.30, 0.85, 0.50, 1.0];
 
 pub const LINK_COLOR: [f32; 4] = [0.27, 0.67, 1.0, 1.0];
-pub const ERROR_COLOR: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+pub const ERROR_COLOR: [f32; 4] = [1.0, 0.35, 0.35, 1.0];
 
 pub fn apply(style: &mut imgui::Style, light_mode: bool) {
     style.window_rounding = 8.0;
     style.popup_rounding = 8.0;
-    style.tab_rounding = 6.0;
+    style.tab_rounding = 4.0;
     style.child_rounding = 6.0;
     style.frame_rounding = 6.0;
     style.scrollbar_rounding = 6.0;
     style.grab_rounding = 4.0;
     style.anti_aliased_lines = true;
     style.anti_aliased_fill = true;
-    style.frame_padding = [8.0, 4.0];
-    style.window_padding = [10.0, 6.0];
-    style.item_spacing = [8.0, 4.0];
+    style.window_padding = [16.0, 12.0];
+    style.frame_padding = [10.0, 5.0];
+    style.item_spacing = [4.0, 4.0];
+    style.window_rounding = 14.0;
+    style.frame_rounding = 8.0;
+    style.child_rounding = 12.0;
+    style.window_border_size = 0.0;
 
     if light_mode {
         style.use_light_colors();

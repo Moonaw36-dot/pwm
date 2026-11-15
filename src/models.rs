@@ -9,10 +9,19 @@ use std::time::Instant;
 use totp_rs::TOTP;
 use zeroize::Zeroizing;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct PasswordHistory {
     pub password: Zeroizing<String>,
     pub changed_at: u64,
+}
+
+impl std::fmt::Debug for PasswordHistory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordHistory")
+            .field("password", &"<redacted>")
+            .field("changed_at", &self.changed_at)
+            .finish()
+    }
 }
 
 pub const PASSWORD_HISTORY_CAP: usize = 10;
@@ -44,7 +53,22 @@ pub fn record_password_change(entry: &mut PasswordEntry, new_password: &str, now
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// A WebAuthn credential created through the browser extension. The private
+/// key is a raw P-256 scalar (base64url) and never leaves the vault except to
+/// sign inside the native host.
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct Passkey {
+    pub credential_id: String,
+    pub rp_id: String,
+    pub user_handle: String,
+    pub user_name: String,
+    pub user_display_name: String,
+    pub private_key: Zeroizing<String>,
+    pub created_at: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PasswordEntry {
     pub label: String,
@@ -66,10 +90,31 @@ pub struct PasswordEntry {
     pub trashed_at: Option<u64>,
     #[serde(default)]
     pub password_history: Vec<PasswordHistory>,
+    #[serde(default)]
+    pub passkeys: Vec<Passkey>,
     #[serde(skip)]
     pub totp_cache: Option<TOTP>,
     #[serde(skip)]
     pub totp_code_cache: Option<(Zeroizing<String>, u64)>,
+}
+
+impl std::fmt::Debug for Passkey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Passkey")
+            .field("rp_id", &self.rp_id)
+            .field("private_key", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for PasswordEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordEntry")
+            .field("label", &self.label)
+            .field("password_type", &self.password_type)
+            .field("secrets", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Copy, PartialEq, Clone, Default, Debug, Serialize, Deserialize)]
@@ -98,12 +143,17 @@ pub struct Vault {
     pub store: Option<PasswordList>,
     pub encryption_key: Option<crate::locked_buf::LockedKey>,
     pub last_activity: Instant,
+    pub last_activity_wall: std::time::SystemTime,
     pub lock_timeout_secs: u64,
     pub iterations: u32,
     pub kdf_params: Option<VaultKdfParams>,
     pub keyfile: Option<PathBuf>,
     pub keyfile_hash: Option<[u8; 32]>,
     pub keyfile_bytes: Option<Zeroizing<Vec<u8>>>,
+    /// Vault file modification time as of our last read or write, so writes
+    /// by the browser-extension host can be detected.
+    pub file_stamp: Option<(PathBuf, std::time::SystemTime)>,
+    pub stamp_checked: Instant,
 }
 
 pub struct EntryForm {
@@ -152,6 +202,7 @@ pub struct Modals {
     pub filename: bool,
     pub master: bool,
     pub master_is_create: bool,
+    pub modify_entry: bool,
     pub show_success: bool,
     pub use_lastused_file: bool,
 }
@@ -159,6 +210,8 @@ pub struct Modals {
 pub struct ClipboardState {
     pub handle: Option<Clipboard>,
     pub clear_at: Option<Instant>,
+    /// Wall-clock twin of `clear_at`, which survives system suspend.
+    pub clear_at_wall: Option<std::time::SystemTime>,
     pub copied_field: Option<String>,
     pub copied_clear_at: Option<Instant>,
     /// Hash of what we last wrote, so the auto-clear only wipes our own data.
@@ -221,11 +274,36 @@ pub struct AppState {
     pub invert_copy_controls: bool,
 
     pub card_texture: Option<imgui::TextureId>,
+
+    /// Bold face registered at startup; `None` until fonts are built
+    /// (e.g. in the headless perf probe).
+    pub font_bold: Option<imgui::FontId>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entries_without_passkeys_still_load_and_passkeys_round_trip() {
+        let old: PasswordEntry =
+            serde_json::from_str(r#"{"label":"legacy","username":"u"}"#).unwrap();
+        assert!(old.passkeys.is_empty());
+
+        let mut entry = PasswordEntry::default();
+        entry.passkeys.push(Passkey {
+            credential_id: "Y3JlZA".into(),
+            rp_id: "example.com".into(),
+            user_handle: "dXNlcg".into(),
+            user_name: "alice".into(),
+            user_display_name: "Alice".into(),
+            private_key: Zeroizing::new("c2VjcmV0".into()),
+            created_at: 42,
+        });
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: PasswordEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.passkeys, entry.passkeys);
+    }
 
     #[test]
     fn test_password_entry_serde_roundtrip() {
@@ -249,6 +327,7 @@ mod tests {
             favorite: None,
             trashed_at: None,
             password_history: Vec::new(),
+            passkeys: Vec::new(),
         };
 
         let json = serde_json::to_string(&entry).unwrap();

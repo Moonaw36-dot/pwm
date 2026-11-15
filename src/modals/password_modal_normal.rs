@@ -44,7 +44,9 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             state.modals.gen_into_form = true;
         }
 
-        ui.input_text("TOTP##add", &mut state.form.totp).build();
+        ui.input_text("TOTP##add", &mut state.form.totp)
+            .password(true)
+            .build();
     }
 
     ui.separator();

@@ -1,9 +1,28 @@
-use argon2::Argon2;
+use argon2::{Algorithm, Argon2, Params, Version};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use zeroize::Zeroizing;
+
+/// Set when the config on disk could not be read or parsed; saving would
+/// then replace records we failed to load (duress, keyfile hashes).
+static LOAD_FAILURE: Mutex<Option<String>> = Mutex::new(None);
+
+fn note_load_failure(message: String) {
+    if let Ok(mut slot) = LOAD_FAILURE.lock() {
+        *slot = Some(message);
+    }
+}
+
+// Same cost as the vault KDF defaults. Older hashes have no recorded costs
+// and keep verifying with the Argon2 crate defaults they were made with.
+const DURESS_M_COST: u32 = crate::file_ops::DEFAULT_M_COST;
+const DURESS_T_COST: u32 = 3;
+const DURESS_P_COST: u32 = 1;
+const DURESS_MAX_M_COST: u32 = 1 << 20;
+const DURESS_MAX_T_COST: u32 = 20;
 
 /// Duress password, stored as an Argon2id hash with a random salt.
 /// The plaintext is never written to disk.
@@ -13,6 +32,8 @@ pub struct Duress {
     salt: Zeroizing<String>,
     #[serde(default)]
     hash: Zeroizing<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    costs: Option<[u32; 3]>,
 }
 
 impl Default for Duress {
@@ -20,8 +41,20 @@ impl Default for Duress {
         Self {
             salt: Zeroizing::new(String::new()),
             hash: Zeroizing::new(String::new()),
+            costs: None,
         }
     }
+}
+
+fn duress_argon(costs: Option<[u32; 3]>) -> Option<Argon2<'static>> {
+    let Some([m, t, p]) = costs else {
+        return Some(Argon2::default());
+    };
+    if m > DURESS_MAX_M_COST || t > DURESS_MAX_T_COST {
+        return None;
+    }
+    let params = Params::new(m, t, p, Some(32)).ok()?;
+    Some(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }
 
 impl Duress {
@@ -37,16 +70,20 @@ impl Duress {
         if password.is_empty() {
             self.salt = Zeroizing::new(String::new());
             self.hash = Zeroizing::new(String::new());
+            self.costs = None;
             return;
         }
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
         let mut hash = [0u8; 32];
-        Argon2::default()
+        let costs = [DURESS_M_COST, DURESS_T_COST, DURESS_P_COST];
+        duress_argon(Some(costs))
+            .expect("duress params are valid")
             .hash_password_into(password.as_bytes(), &salt, &mut hash)
-            .expect("argon2 default params are valid");
+            .expect("duress params are valid");
         self.salt = Zeroizing::new(hex(&salt));
         self.hash = Zeroizing::new(hex(&hash));
+        self.costs = Some(costs);
     }
 
     /// True when no duress password is configured.
@@ -59,11 +96,14 @@ impl Duress {
         let (Ok(salt), Ok(expected)) = (unhex(&self.salt), unhex(&self.hash)) else {
             return false;
         };
-        let mut actual = [0u8; 32];
-        Argon2::default()
-            .hash_password_into(password.as_bytes(), &salt, &mut actual)
+        let Some(argon) = duress_argon(self.costs) else {
+            return false;
+        };
+        let mut actual = Zeroizing::new([0u8; 32]);
+        argon
+            .hash_password_into(password.as_bytes(), &salt, &mut *actual)
             .is_ok()
-            && ct_eq(&actual, &expected)
+            && ct_eq(&*actual, &expected)
     }
 }
 
@@ -183,6 +223,9 @@ pub fn load() -> Config {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Config::default(),
         Err(error) => {
             log::error!("Failed to read config, using defaults: {error}");
+            note_load_failure(format!(
+                "The config file could not be read ({error}), so settings are not saved to avoid overwriting it."
+            ));
             return Config::default();
         }
     };
@@ -192,10 +235,16 @@ pub fn load() -> Config {
         Err(e) => {
             log::error!("Failed to parse config, using default config: {e}");
             quarantine_corrupt_config(&path);
+            note_load_failure(format!(
+                "The config file was corrupt and has been set aside as config.json.corrupt-*; settings are not saved this session so it can be restored. ({e})"
+            ));
             return Config::default();
         }
     };
 
+    if let Ok(mut slot) = LOAD_FAILURE.lock() {
+        *slot = None;
+    }
     if config.migrate_legacy_duress()
         && let Err(error) = save(&config)
     {
@@ -232,6 +281,11 @@ impl Config {
 }
 
 pub fn save(config: &Config) -> Result<(), String> {
+    if let Ok(slot) = LOAD_FAILURE.lock()
+        && let Some(message) = slot.as_ref()
+    {
+        return Err(message.clone());
+    }
     let Some(path) = config_path() else {
         return Err("Could not determine config directory".to_string());
     };
@@ -286,6 +340,19 @@ mod tests {
                 .get(&vault_b)
                 .is_some_and(|duress| duress.matches("panic-button"))
         );
+    }
+
+    #[test]
+    fn test_duress_hash_without_recorded_costs_still_verifies() {
+        let salt = [7u8; 16];
+        let mut hash = [0u8; 32];
+        Argon2::default()
+            .hash_password_into(b"old-duress", &salt, &mut hash)
+            .unwrap();
+        let json = format!(r#"{{"salt":"{}","hash":"{}"}}"#, hex(&salt), hex(&hash));
+        let old: Duress = serde_json::from_str(&json).unwrap();
+        assert!(old.matches("old-duress"));
+        assert!(!old.matches("other"));
     }
 
     #[test]

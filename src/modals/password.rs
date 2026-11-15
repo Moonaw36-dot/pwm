@@ -36,13 +36,12 @@ pub fn password_modal(ui: &imgui::Ui, state: &mut AppState) {
         }
     } else {
         match state.form.password_type {
-            PasswordType::Normal => {
+            PasswordType::Normal | PasswordType::WiFi => {
                 crate::modals::password_modal_normal::render(ui, state);
             }
             PasswordType::Card => {
                 crate::modals::password_modal_card::render(ui, state);
             }
-            PasswordType::WiFi => {}
         }
     }
 }

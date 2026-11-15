@@ -6,7 +6,9 @@ pub fn render_delete_tab(ui: &imgui::Ui, state: &mut AppState) {
         return;
     }
 
+    let _bold = crate::ui::push_bold(ui, state);
     ui.text("Delete passwords.");
+    drop(_bold);
 
     if let Some((idx, _entry)) = crate::modals::render_entries_list(ui, state, "Delete") {
         state.delete_idx = Some(idx as usize);

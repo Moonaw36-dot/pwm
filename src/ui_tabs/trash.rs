@@ -1,6 +1,11 @@
 use crate::app::{AppState, hash_password};
 use crate::models::{PasswordEntry, PasswordType, is_trashed, now_unix};
 
+thread_local! {
+    static PURGE_PIN: std::cell::RefCell<crate::ui::PinnedEntry> =
+        const { std::cell::RefCell::new(None) };
+}
+
 const SECS_PER_DAY: u64 = 24 * 60 * 60;
 
 fn type_indicator(entry: &PasswordEntry) -> &'static str {
@@ -175,14 +180,18 @@ pub fn render_trash_tab(ui: &imgui::Ui, state: &mut AppState) {
 }
 
 fn drop_stale_pending(state: &mut AppState) {
-    if let Some(index) = state.trash_purge_pending
-        && state
-            .vault
-            .store
-            .as_ref()
-            .and_then(|store| store.entries.get(index))
-            .is_none_or(|entry| !is_trashed(entry))
-    {
+    let valid = PURGE_PIN.with(|pin| {
+        crate::ui::index_still_valid(
+            &mut pin.borrow_mut(),
+            state.trash_purge_pending,
+            state.vault.store.as_ref(),
+        )
+    });
+    let still_trashed = state
+        .trash_purge_pending
+        .and_then(|index| state.vault.store.as_ref()?.entries.get(index))
+        .is_some_and(is_trashed);
+    if !valid || (state.trash_purge_pending.is_some() && !still_trashed) {
         state.trash_purge_pending = None;
     }
 }

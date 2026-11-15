@@ -18,6 +18,7 @@ let
   ];
 in
 pkgs.mkShell {
-  buildInputs = libraries;
+  nativeBuildInputs = [ pkgs.pkg-config ];
+  buildInputs = libraries ++ [ pkgs.freetype ];
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libraries;
 }

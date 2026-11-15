@@ -32,7 +32,9 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
     }
 
     ui.input_text("Notes", &mut state.form.notes).build();
-    ui.input_text("TOTP###MODIFY", &mut state.form.totp).build();
+    ui.input_text("TOTP###MODIFY", &mut state.form.totp)
+        .password(true)
+        .build();
     ui.separator();
 
     crate::modals::render_custom_fields_editor(ui, &mut state.form.custom_fields, "modify");
@@ -76,6 +78,7 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
         }
         let trashed_at = store.entries[idx].trashed_at;
         let password_history = std::mem::take(&mut store.entries[idx].password_history);
+        let passkeys = std::mem::take(&mut store.entries[idx].passkeys);
         let created_at = store.entries[idx].created_at;
         let password_type = store.entries[idx].password_type;
         store.entries[idx] = PasswordEntry {
@@ -92,22 +95,24 @@ pub fn render(ui: &imgui::Ui, state: &mut AppState) {
             },
             notes: state.form.notes.clone(),
             url: state.form.url.clone(),
-            totp_secret: crate::modals::modify_entry::sanitize_totp(std::mem::replace(
-                &mut state.form.totp,
-                Zeroizing::new(String::new()),
-            ))
+            totp_secret: {
+                let totp = std::mem::replace(&mut state.form.totp, Zeroizing::new(String::new()));
+                if state.form.is_secure_note {
+                    None
+                } else {
+                    crate::modals::modify_entry::sanitize_totp(totp)
+                }
+            }
             .into(),
             tags: crate::modals::modify_entry::parse_tags(std::mem::take(&mut state.form.tag)),
-            custom_fields: Zeroizing::new(
-                std::mem::take(&mut *state.form.custom_fields)
-                    .into_iter()
-                    .filter(|(k, _)| !k.trim().is_empty())
-                    .collect::<Vec<_>>(),
-            ),
+            custom_fields: Zeroizing::new(crate::modals::take_custom_fields(
+                &mut state.form.custom_fields,
+            )),
             is_secure_note: state.form.is_secure_note,
             created_at,
             trashed_at,
             password_history,
+            passkeys,
             totp_cache: None,
             password_type,
             number: store.entries[idx].number.clone(),
@@ -158,7 +163,7 @@ fn render_password_history(ui: &imgui::Ui, state: &mut AppState) {
         ));
         ui.same_line();
         if ui.button(format!("Copy##pw_history_{i}")) {
-            copied = Some(item.password.to_string());
+            copied = Some(item.password.clone());
         }
         ui.same_line();
         if ui.button(format!("Restore##pw_history_{i}")) {

@@ -4,13 +4,156 @@ use crate::models::PasswordType;
 use crate::strength::master_password_issue;
 use crate::{config, strength, theme};
 use rand::RngExt;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::result::Result::Ok;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zeroize::{Zeroize, Zeroizing};
 
+enum Unlocked {
+    Real(PasswordList, crate::locked_buf::LockedKey, VaultKdfParams),
+    Decoy(
+        PasswordList,
+        crate::locked_buf::LockedKey,
+        VaultKdfParams,
+        PathBuf,
+    ),
+    NeedKeyfile,
+    Failed(String),
+}
+
+thread_local! {
+    // The UI runs on one thread, so the pending unlock lives here.
+    static UNLOCK_JOB: RefCell<Option<Receiver<Unlocked>>> = const { RefCell::new(None) };
+}
+
+/// Abort an unlock in flight and wipe the unlock inputs.
+pub(crate) fn cancel(state: &mut AppState) {
+    UNLOCK_JOB.with(|job| job.borrow_mut().take());
+    state.cancel_unlock();
+}
+
+fn unlocking() -> bool {
+    UNLOCK_JOB.with(|job| job.borrow().is_some())
+}
+
+fn start_unlock(state: &AppState, path: PathBuf) {
+    let password = Zeroizing::new(state.master_input.to_string());
+    let keyfile = state.vault.keyfile_bytes.clone();
+    let keyfile_missing = state.vault.keyfile_hash.is_some() && keyfile.is_none();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = unlock_worker(&path, &password, keyfile.as_ref(), keyfile_missing);
+        // A dropped receiver means the user cancelled.
+        let _ = sender.send(outcome);
+    });
+    UNLOCK_JOB.with(|job| *job.borrow_mut() = Some(receiver));
+}
+
+fn unlock_worker(
+    path: &PathBuf,
+    password: &str,
+    keyfile: Option<&Zeroizing<Vec<u8>>>,
+    keyfile_missing: bool,
+) -> Unlocked {
+    // The real vault goes first, so a duress password equal to the master
+    // password can never lock the owner out.
+    let mut real_error = None;
+    if !keyfile_missing {
+        match load_store(path, password, keyfile.map(|v| v.as_slice())) {
+            Ok((store, key, params)) => return Unlocked::Real(store, key, params),
+            Err(error) => real_error = Some(error),
+        }
+    }
+
+    let duress_hit = config::load()
+        .duress_by_vault
+        .get(path)
+        .is_some_and(|duress| duress.matches(password));
+    if duress_hit {
+        return match load_or_create_decoy(path, password) {
+            Ok((store, key, params, decoy_path)) => Unlocked::Decoy(store, key, params, decoy_path),
+            Err(_) => Unlocked::Failed(
+                "Decryption failed: wrong master password or corrupted file".to_string(),
+            ),
+        };
+    }
+
+    match real_error {
+        Some(error) => Unlocked::Failed(error),
+        None => Unlocked::NeedKeyfile,
+    }
+}
+
+fn register_failed_unlock(state: &mut AppState) {
+    state.failed_unlocks = state.failed_unlocks.saturating_add(1);
+    let secs = crate::app::unlock_penalty_secs(state.failed_unlocks);
+    if secs > 0 {
+        state.unlock_penalty_until = Some(Instant::now() + Duration::from_secs(secs));
+    }
+}
+
+fn finish_unlock(ui: &imgui::Ui, state: &mut AppState, outcome: Unlocked) {
+    match outcome {
+        Unlocked::Real(store, key, params) => {
+            if let Some(path) = state.vault.file_path.clone() {
+                if let Err(error) = crate::file_ops::remember_keyfile_hash(state) {
+                    state.custom_error_message = Some(error);
+                }
+                let name = state.vault.file_name.clone();
+                open_unlocked_vault(state, path, &name, store, key, params);
+                ui.close_current_popup();
+            }
+        }
+        Unlocked::Decoy(store, key, params, decoy_path) => {
+            // The decoy never has a keyfile, even when the real vault has one.
+            state.vault.keyfile = None;
+            state.vault.keyfile_bytes = None;
+            state.vault.keyfile_hash = None;
+            // Keep the real file name so nothing in the UI hints at the decoy.
+            let name = state.vault.file_name.clone();
+            open_unlocked_vault(state, decoy_path, &name, store, key, params);
+            ui.close_current_popup();
+        }
+        Unlocked::NeedKeyfile => {
+            state.custom_error_message =
+                Some("Please select your keyfile before unlocking.".to_string());
+        }
+        Unlocked::Failed(error) => {
+            register_failed_unlock(state);
+            state.custom_error_message = Some(error);
+        }
+    }
+}
+
 pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
     ui.dummy([theme::MODAL_WIDTH_STANDARD, 0.0]);
+
+    let finished = UNLOCK_JOB.with(|job| {
+        let mut job = job.borrow_mut();
+        let result = match job.as_ref()?.try_recv() {
+            Ok(outcome) => Some(outcome),
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => Some(Unlocked::Failed(
+                "Unlock worker stopped unexpectedly".to_string(),
+            )),
+        };
+        *job = None;
+        result
+    });
+    if let Some(outcome) = finished {
+        finish_unlock(ui, state, outcome);
+        return;
+    }
+    if unlocking() {
+        ui.text("Unlocking...");
+        if ui.button("Cancel##unlocking") {
+            cancel(state);
+            ui.close_current_popup();
+        }
+        return;
+    }
 
     if state.modals.master_is_create {
         ui.text("Set a master password for your new file.");
@@ -88,17 +231,6 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
             }
             state.unlock_penalty_until = None;
         }
-        let config = config::load();
-        if !state.modals.master_is_create
-            && let Some(path) = state.vault.file_path.clone()
-            && let Some(duress) = config.duress_by_vault.get(&path)
-            && duress.matches(&state.master_input)
-        {
-            open_decoy_vault(state, &path);
-            ui.close_current_popup();
-            return;
-        }
-
         if state.modals.master_is_create {
             if state.master_input.is_empty() {
                 state.custom_error_message = Some("Master password cannot be empty.".to_string());
@@ -128,39 +260,14 @@ pub fn enter_master_password(ui: &imgui::Ui, state: &mut AppState) {
                     state.custom_error_message = Some(e);
                 }
             }
-        } else if state.vault.keyfile_hash.is_some() && state.vault.keyfile.is_none() {
-            state.custom_error_message =
-                Some("Please select your keyfile before unlocking.".to_string());
         } else if let Some(path) = state.vault.file_path.clone() {
-            let name = state.vault.file_name.clone();
-            match load_store(
-                &path,
-                &state.master_input,
-                state.vault.keyfile_bytes.as_ref().map(|v| v.as_slice()),
-            ) {
-                Ok((store, key, params)) => {
-                    if let Err(error) = crate::file_ops::remember_keyfile_hash(state) {
-                        state.custom_error_message = Some(error);
-                    }
-                    open_unlocked_vault(state, path, &name, store, key, params);
-                    ui.close_current_popup();
-                }
-                Err(e) => {
-                    state.failed_unlocks = state.failed_unlocks.saturating_add(1);
-                    let secs = crate::app::unlock_penalty_secs(state.failed_unlocks);
-                    if secs > 0 {
-                        state.unlock_penalty_until =
-                            Some(Instant::now() + Duration::from_secs(secs));
-                    }
-                    state.custom_error_message = Some(e);
-                }
-            }
+            start_unlock(state, path);
         }
     }
 
     ui.same_line();
     if ui.button("Cancel") {
-        state.cancel_unlock();
+        cancel(state);
         ui.close_current_popup();
     }
 }
@@ -185,14 +292,26 @@ fn open_unlocked_vault(
     state.master_confirm_input.zeroize();
 }
 
-fn open_decoy_vault(state: &mut AppState, vault_path: &Path) {
-    let duress_password = state.master_input.clone();
+/// Open `<vault>.decoy.aegis` with the duress password, generating it first
+/// when it does not exist yet.
+pub(crate) fn load_or_create_decoy(
+    vault_path: &Path,
+    duress_password: &str,
+) -> Result<
+    (
+        PasswordList,
+        crate::locked_buf::LockedKey,
+        VaultKdfParams,
+        PathBuf,
+    ),
+    String,
+> {
     let decoy_path = decoy_path_for(vault_path);
-    let loaded = load_store(&decoy_path, &duress_password, None).or_else(|_| {
+    let create = |decoy_path: &PathBuf| {
         write_new_vault_file(
-            &decoy_path,
+            decoy_path,
             &build_decoy_store(),
-            &duress_password,
+            duress_password,
             VaultKdfParams {
                 m_cost: crate::file_ops::DEFAULT_M_COST,
                 t_cost: 3,
@@ -200,31 +319,32 @@ fn open_decoy_vault(state: &mut AppState, vault_path: &Path) {
             },
             None,
         )?;
-        load_store(&decoy_path, &duress_password, None)
-    });
-    let Ok((store, key, params)) = loaded else {
-        state.failed_unlocks = state.failed_unlocks.saturating_add(1);
-        let secs = crate::app::unlock_penalty_secs(state.failed_unlocks);
-        if secs > 0 {
-            state.unlock_penalty_until = Some(Instant::now() + Duration::from_secs(secs));
-        }
-        state.custom_error_message =
-            Some("Decryption failed: wrong master password or corrupted file".to_string());
-        return;
+        load_store(decoy_path, duress_password, None)
     };
-    // The decoy never has a keyfile, even when the real vault has one.
-    state.vault.keyfile = None;
-    state.vault.keyfile_bytes = None;
-    state.vault.keyfile_hash = None;
-    let name = decoy_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("decoy.aegis")
-        .to_string();
-    open_unlocked_vault(state, decoy_path, &name, store, key, params);
+    let (store, key, params) = match std::fs::metadata(&decoy_path) {
+        Ok(_) => match load_store(&decoy_path, duress_password, None) {
+            Ok(opened) => opened,
+            Err(error) if error.starts_with("Failed to read") => return Err(error),
+            Err(_) => {
+                // Left over from an earlier duress password; start over.
+                std::fs::remove_file(&decoy_path)
+                    .map_err(|e| format!("Failed to replace decoy vault: {e}"))?;
+                create(&decoy_path)?
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => create(&decoy_path)?,
+        Err(error) => return Err(format!("Failed to read vault: {error}")),
+    };
+    Ok((store, key, params, decoy_path))
 }
 
-fn decoy_path_for(vault_path: &Path) -> PathBuf {
+pub(crate) fn is_decoy_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".decoy.aegis"))
+}
+
+pub(crate) fn decoy_path_for(vault_path: &Path) -> PathBuf {
     let stem = vault_path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -301,6 +421,7 @@ fn decoy_login(
         totp_code_cache: None,
         trashed_at: None,
         password_history: Vec::new(),
+        passkeys: Vec::new(),
     }
 }
 
