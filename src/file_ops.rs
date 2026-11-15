@@ -1207,6 +1207,42 @@ mod tests {
         ))
     }
 
+    /// The iOS app uses its own copy of the vault code in aegis-core. Whatever
+    /// one side writes, the other must open, with and without a keyfile.
+    #[test]
+    fn vaults_round_trip_with_aegis_core() {
+        let params = VaultKdfParams {
+            m_cost: 8,
+            t_cost: 1,
+            p_cost: 1,
+        };
+        let keyfile = b"shared keyfile bytes";
+        for kf in [None, Some(&keyfile[..])] {
+            let path = temp_vault_path("core-compat");
+            write_new_vault_file(&path, &sample_store(), "pw", params, kf).unwrap();
+            let data = std::fs::read(&path).unwrap();
+            let opened = aegis_core::UnlockedVault::open(&data, "pw", kf).unwrap();
+            assert_eq!(opened.list.entries[0].label, "test");
+            assert!(opened.key_opens(&data));
+
+            let mut from_core = aegis_core::UnlockedVault::create(
+                "pw2",
+                aegis_core::KdfParams {
+                    m_cost: 8,
+                    t_cost: 1,
+                    p_cost: 1,
+                },
+                kf,
+            )
+            .unwrap();
+            from_core.list = aegis_core::decoy::decoy_list();
+            std::fs::write(&path, from_core.seal().unwrap()).unwrap();
+            let (store, _, _) = load_store(&path, "pw2", kf).unwrap();
+            assert_eq!(store.entries.len(), from_core.list.entries.len());
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
     fn sample_store() -> PasswordList {
         PasswordList {
             entries: vec![

@@ -258,6 +258,25 @@ impl Vault {
         Ok(Self::wrap(vault))
     }
 
+    /// A new vault filled with believable fake entries, for a duress password.
+    #[uniffi::constructor]
+    pub fn create_decoy(password: String) -> Result<Arc<Self>, AegisError> {
+        let password = Zeroizing::new(password);
+        let mut vault = UnlockedVault::create(&password, KdfParams::default(), None)?;
+        vault.list = aegis_core::decoy::decoy_list();
+        Ok(Self::wrap(vault))
+    }
+
+    /// True when this vault's key decrypts `existing` (the file about to be
+    /// overwritten). False means the file was re-keyed or replaced elsewhere,
+    /// and saving over it would leave a vault nobody can open.
+    pub fn can_save_over(&self, existing: Vec<u8>) -> bool {
+        self.inner()
+            .vault
+            .as_ref()
+            .is_some_and(|v| v.key_opens(&existing))
+    }
+
     /// All entries, including trashed ones, in file order. Empty when locked.
     pub fn entries(&self) -> Vec<Entry> {
         let inner = self.inner();

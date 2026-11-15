@@ -243,3 +243,30 @@ fn free_functions() {
     let phrase = aegis_ffi::generate_passphrase(4, "-".into());
     assert_eq!(phrase.split('-').count(), 4);
 }
+
+#[test]
+fn refuses_to_save_over_a_rekeyed_file() {
+    let vault = open_fixture();
+    assert!(vault.can_save_over(PLAIN.to_vec()));
+    assert!(vault.can_save_over(vault.seal().unwrap()));
+
+    // Another device changed the master password: same file, new key.
+    let other = open_fixture();
+    other.change_password("someone-else".into(), None).unwrap();
+    assert!(!vault.can_save_over(other.seal().unwrap()));
+    assert!(!vault.can_save_over(WITH_KEYFILE.to_vec()));
+    assert!(!vault.can_save_over(b"not a vault".to_vec()));
+
+    vault.lock();
+    assert!(!vault.can_save_over(PLAIN.to_vec()));
+}
+
+#[test]
+fn decoy_vault_round_trips() {
+    let decoy = Vault::create_decoy("duress-pass".into()).unwrap();
+    let sealed = decoy.seal().unwrap();
+    let reopened = Vault::open(sealed, "duress-pass".into(), None).unwrap();
+    let entries = reopened.entries();
+    assert!(entries.len() > 5);
+    assert!(entries.iter().any(|e| e.entry_type == EntryType::Card));
+}

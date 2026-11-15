@@ -37,6 +37,9 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 base64 = "0.22"
 
 
+[dev-dependencies]
+aegis-core = { path = "aegis-core" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

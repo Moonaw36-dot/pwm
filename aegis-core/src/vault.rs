@@ -39,6 +39,12 @@ impl UnlockedVault {
         })
     }
 
+    /// True when this vault's key opens `data`, so writing over that file
+    /// won't lock anyone out. See [`format::key_opens`].
+    pub fn key_opens(&self, data: &[u8]) -> bool {
+        format::key_opens(data, &self.key)
+    }
+
     /// Encrypt the current contents into vault file bytes. Keeps the salt and
     /// KDF params, so the same master password keeps working.
     pub fn seal(&self) -> Result<Vec<u8>, String> {

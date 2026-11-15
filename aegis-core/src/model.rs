@@ -17,13 +17,13 @@ pub enum PasswordType {
     WiFi,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct PasswordHistory {
     pub password: Zeroizing<String>,
     pub changed_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PasswordEntry {
     pub label: String,
@@ -45,6 +45,26 @@ pub struct PasswordEntry {
     pub password_history: Vec<PasswordHistory>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+// Hand-written so a stray {:?} or panic message never prints a secret.
+impl std::fmt::Debug for PasswordHistory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordHistory")
+            .field("changed_at", &self.changed_at)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for PasswordEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordEntry")
+            .field("label", &self.label)
+            .field("password_type", &self.password_type)
+            .field("created_at", &self.created_at)
+            .field("trashed_at", &self.trashed_at)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PasswordEntry {
@@ -79,7 +99,9 @@ pub struct PasswordList {
 impl PasswordList {
     pub fn from_json(json: &[u8]) -> Result<Self, String> {
         serde_json::from_slice(json).map_err(|e| {
-            if e.to_string().contains("unknown variant") {
+            // The payload decrypted, so a data error means it's well-formed
+            // JSON whose values we don't understand: a newer Aegis wrote it.
+            if e.classify() == serde_json::error::Category::Data {
                 "This vault was created by a newer version of Aegis".to_string()
             } else {
                 format!("Corrupted vault contents: {e}")

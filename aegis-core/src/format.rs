@@ -35,7 +35,9 @@ pub const DEFAULT_T_COST: u32 = 3;
 /// Bounds on KDF parameters read from the vault header, which is untrusted
 /// input: absurd values must fail fast instead of hanging or OOMing.
 pub const MIN_M_COST: u32 = 8;
-pub const MAX_M_COST: u32 = 1_048_576;
+/// Matches the desktop app. Also keeps the AutoFill extension, which iOS
+/// caps at a little over 100 MiB, from being killed mid-unlock on odd vaults.
+pub const MAX_M_COST: u32 = 262_144;
 pub const MAX_T_COST: u32 = 20;
 pub const MAX_P_COST: u32 = 8;
 
@@ -96,44 +98,52 @@ pub fn derive_key(
     validate_kdf_params(params)?;
     let raw = argon2_key(password, salt, params)?;
     Ok(match keyfile {
-        Some(kf) => Zeroizing::new(combine_keyfile(&raw, kf)),
+        Some(kf) => combine_keyfile(&raw, kf),
         None => raw,
     })
 }
 
-pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> Key {
     const BLOCK_LEN: usize = 64;
-    let mut padded = [0u8; BLOCK_LEN];
+    let mut padded = Zeroizing::new([0u8; BLOCK_LEN]);
     if key.len() > BLOCK_LEN {
         padded[..32].copy_from_slice(&Sha256::digest(key));
     } else {
         padded[..key.len()].copy_from_slice(key);
     }
 
+    let mut ipad = Zeroizing::new([0u8; BLOCK_LEN]);
+    let mut opad = Zeroizing::new([0u8; BLOCK_LEN]);
+    for i in 0..BLOCK_LEN {
+        ipad[i] = padded[i] ^ 0x36;
+        opad[i] = padded[i] ^ 0x5c;
+    }
+
     let mut inner = Sha256::new();
-    let mut outer = Sha256::new();
-    inner.update(padded.iter().map(|b| b ^ 0x36).collect::<Vec<u8>>());
+    inner.update(&ipad[..]);
     inner.update(message);
-    outer.update(padded.iter().map(|b| b ^ 0x5c).collect::<Vec<u8>>());
-    outer.update(inner.finalize());
-    outer.finalize().into()
+    let inner_hash = Zeroizing::new(<[u8; 32]>::from(inner.finalize()));
+    let mut outer = Sha256::new();
+    outer.update(&opad[..]);
+    outer.update(&inner_hash[..]);
+    Zeroizing::new(outer.finalize().into())
 }
 
 /// HKDF-SHA256 with the Argon2id output as salt and the keyfile as input key
 /// material, so the vault key needs both factors to reconstruct.
-pub fn combine_keyfile(argon_key: &[u8; 32], keyfile: &[u8]) -> [u8; 32] {
+pub fn combine_keyfile(argon_key: &[u8; 32], keyfile: &[u8]) -> Key {
     const INFO: &[u8] = b"aegis keyfile";
     let prk = hmac_sha256(argon_key, keyfile);
-    hmac_sha256(&prk, &[INFO, &[1u8]].concat())
+    hmac_sha256(&prk[..], &[INFO, &[1u8]].concat())
 }
 
 /// Vaults saved before the HKDF combiner used a bare SHA-256 over the
 /// concatenated keys; kept so those vaults still open.
-pub fn combine_keyfile_legacy(argon_key: &[u8; 32], keyfile: &[u8]) -> [u8; 32] {
+pub fn combine_keyfile_legacy(argon_key: &[u8; 32], keyfile: &[u8]) -> Key {
     let mut combined = Zeroizing::new(Vec::with_capacity(32 + keyfile.len()));
     combined.extend_from_slice(argon_key);
     combined.extend_from_slice(keyfile);
-    Sha256::digest(&*combined).into()
+    Zeroizing::new(Sha256::digest(&*combined).into())
 }
 
 pub fn random_salt() -> [u8; SALT_LEN] {
@@ -204,10 +214,7 @@ pub fn read_salt(data: &[u8]) -> Result<[u8; SALT_LEN], String> {
 /// legacy one, since vaults from before the HKDF combiner must still open.
 fn candidate_keys(raw: Key, keyfile: Option<&[u8]>) -> Vec<Key> {
     match keyfile {
-        Some(kf) => vec![
-            Zeroizing::new(combine_keyfile(&raw, kf)),
-            Zeroizing::new(combine_keyfile_legacy(&raw, kf)),
-        ],
+        Some(kf) => vec![combine_keyfile(&raw, kf), combine_keyfile_legacy(&raw, kf)],
         None => vec![raw],
     }
 }
@@ -368,17 +375,23 @@ pub fn legacy_attempts(data: &[u8]) -> Vec<LegacyAttempt> {
         .map(|(nonce_start, param_list)| {
             let mut nonce = [0u8; NONCE_LEN];
             nonce.copy_from_slice(&data[nonce_start..nonce_start + NONCE_LEN]);
+            let mut params: Vec<KdfParams> = Vec::new();
+            for (m_cost, t_cost) in param_list {
+                let candidate = KdfParams {
+                    m_cost,
+                    t_cost,
+                    p_cost: 1,
+                };
+                // (65536, iterations) is often (65536, 3) again; don't run
+                // Argon2 twice for it.
+                if !params.contains(&candidate) {
+                    params.push(candidate);
+                }
+            }
             LegacyAttempt {
                 nonce,
                 ciphertext_offset: nonce_start + NONCE_LEN,
-                params: param_list
-                    .into_iter()
-                    .map(|(m_cost, t_cost)| KdfParams {
-                        m_cost,
-                        t_cost,
-                        p_cost: 1,
-                    })
-                    .collect(),
+                params,
             }
         })
         .collect()
@@ -415,4 +428,29 @@ pub fn open(data: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Opene
     }
 
     Err(DECRYPT_ERROR.to_string())
+}
+
+/// True when `key` decrypts the vault file `data`, in any supported layout.
+/// No key derivation, so it's cheap: use it before overwriting a file to make
+/// sure it is still the vault this key belongs to and not a version that was
+/// re-keyed on another device in the meantime.
+pub fn key_opens(data: &[u8], key: &[u8; KEY_LEN]) -> bool {
+    let cipher = Aes256Gcm::new(key.into());
+    if data.starts_with(&MAGIC) {
+        let Ok(header) = parse_header_v2(data) else {
+            return false;
+        };
+        let ciphertext = &data[HEADER_LEN_V2..];
+        let with_aad = aes_gcm::aead::Payload {
+            msg: ciphertext,
+            aad: &data[..HEADER_LEN_V2],
+        };
+        return cipher.decrypt((&header.nonce).into(), with_aad).is_ok()
+            || cipher.decrypt((&header.nonce).into(), ciphertext).is_ok();
+    }
+    legacy_attempts(data).iter().any(|attempt| {
+        cipher
+            .decrypt((&attempt.nonce).into(), &data[attempt.ciphertext_offset..])
+            .is_ok()
+    })
 }

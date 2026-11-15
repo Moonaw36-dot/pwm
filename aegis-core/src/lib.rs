@@ -4,6 +4,7 @@
 //! No file I/O, UI or networking lives here, so the same code backs the
 //! desktop app and the iOS app.
 
+pub mod decoy;
 pub mod format;
 pub mod generator;
 pub mod model;
