@@ -1,0 +1,44 @@
+[package]
+name = "aegis-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "LicenseRef-MIT-Attribution"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
+aegis-core = { path = "../aegis-core" }
+
+# Keep this crate out of the root workspace: cargo-fuzz needs nightly and
+# its own lockfile.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "vault_open"
+path = "fuzz_targets/vault_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_json"
+path = "fuzz_targets/vault_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "seal_open_roundtrip"
+path = "fuzz_targets/seal_open_roundtrip.rs"
+test = false
+doc = false
+bench = false

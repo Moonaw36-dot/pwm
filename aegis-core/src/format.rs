@@ -238,8 +238,19 @@ fn read_u32(data: &[u8], offset: usize) -> Result<u32, String> {
         .ok_or_else(|| TRUNCATED.to_string())
 }
 
-/// Decrypt a v2 vault (must start with [`MAGIC`]).
-pub fn open_v2(data: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Opened, String> {
+/// The fixed-size header of a v2 vault, as parsed by [`parse_header_v2`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeaderV2 {
+    pub salt: [u8; SALT_LEN],
+    pub params: KdfParams,
+    pub nonce: [u8; NONCE_LEN],
+}
+
+/// Parse and validate the header of a v2 vault without doing any key
+/// derivation. Like [`open_v2`], this does not check [`MAGIC`] itself (callers
+/// dispatch on it); it does require at least one ciphertext byte after the
+/// header, a supported version, and KDF params within bounds.
+pub fn parse_header_v2(data: &[u8]) -> Result<HeaderV2, String> {
     if data.len() <= HEADER_LEN_V2 {
         return Err(TRUNCATED.to_string());
     }
@@ -266,6 +277,20 @@ pub fn open_v2(data: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Op
         .try_into()
         .map_err(|_| TRUNCATED.to_string())?;
     validate_kdf_params(params)?;
+    Ok(HeaderV2 {
+        salt,
+        params,
+        nonce,
+    })
+}
+
+/// Decrypt a v2 vault (must start with [`MAGIC`]).
+pub fn open_v2(data: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Opened, String> {
+    let HeaderV2 {
+        salt,
+        params,
+        nonce,
+    } = parse_header_v2(data)?;
     let ciphertext = &data[HEADER_LEN_V2..];
 
     // Vaults saved before the header was authenticated as AAD, and before the
@@ -312,6 +337,53 @@ fn parse_iterations_from_header(data: &[u8]) -> u32 {
     3
 }
 
+/// One headerless layout guess for a pre-v2 vault: where the nonce and
+/// ciphertext would be, and the KDF params to try, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyAttempt {
+    pub nonce: [u8; NONCE_LEN],
+    /// The ciphertext is `data[ciphertext_offset..]`.
+    pub ciphertext_offset: usize,
+    pub params: Vec<KdfParams>,
+}
+
+/// Layout guesses [`open`] tries for a file that does not start with
+/// [`MAGIC`]: the oldest `salt | nonce | ct` layout first, then
+/// `salt | t_cost u32 | nonce | ct`. Pure parsing, no key derivation.
+pub fn legacy_attempts(data: &[u8]) -> Vec<LegacyAttempt> {
+    let mut layouts: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
+    if data.len() > HEADER_LEN_LEGACY {
+        layouts.push((SALT_LEN, vec![(19456, 2), (65536, 3)]));
+    }
+    if data.len() > HEADER_LEN {
+        let iterations = parse_iterations_from_header(data);
+        layouts.push((
+            SALT_LEN + ITER_LEN,
+            vec![(65536, iterations), (65536, 3), (19456, 2), (65536, 2)],
+        ));
+    }
+
+    layouts
+        .into_iter()
+        .map(|(nonce_start, param_list)| {
+            let mut nonce = [0u8; NONCE_LEN];
+            nonce.copy_from_slice(&data[nonce_start..nonce_start + NONCE_LEN]);
+            LegacyAttempt {
+                nonce,
+                ciphertext_offset: nonce_start + NONCE_LEN,
+                params: param_list
+                    .into_iter()
+                    .map(|(m_cost, t_cost)| KdfParams {
+                        m_cost,
+                        t_cost,
+                        p_cost: 1,
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
 /// Decrypt a vault file in any supported layout.
 pub fn open(data: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Opened, String> {
     if data.len() < SALT_LEN {
@@ -326,31 +398,11 @@ pub fn open(data: &[u8], password: &str, keyfile: Option<&[u8]>) -> Result<Opene
         .try_into()
         .map_err(|_| "Invalid salt".to_string())?;
 
-    let mut attempts: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
-    if data.len() > HEADER_LEN_LEGACY {
-        attempts.push((SALT_LEN, vec![(19456, 2), (65536, 3)]));
-    }
-    if data.len() > HEADER_LEN {
-        let iterations = parse_iterations_from_header(data);
-        attempts.push((
-            SALT_LEN + ITER_LEN,
-            vec![(65536, iterations), (65536, 3), (19456, 2), (65536, 2)],
-        ));
-    }
-
-    for (nonce_start, param_list) in attempts {
-        let nonce: [u8; NONCE_LEN] = data[nonce_start..nonce_start + NONCE_LEN]
-            .try_into()
-            .map_err(|_| "Invalid nonce".to_string())?;
-        let ciphertext = &data[nonce_start + NONCE_LEN..];
-        for (m_cost, t_cost) in param_list {
-            let params = KdfParams {
-                m_cost,
-                t_cost,
-                p_cost: 1,
-            };
+    for attempt in legacy_attempts(data) {
+        let ciphertext = &data[attempt.ciphertext_offset..];
+        for params in attempt.params {
             if let Some((plaintext, key)) =
-                try_decrypt_legacy(password, &salt, &nonce, ciphertext, params, keyfile)
+                try_decrypt_legacy(password, &salt, &attempt.nonce, ciphertext, params, keyfile)
             {
                 return Ok(Opened {
                     plaintext,
